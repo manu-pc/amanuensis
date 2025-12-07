@@ -1,11 +1,6 @@
-package com.ejemplo.calc.gui.screens;
+package com.tui.screens;
 
-import com.ejemplo.calc.gui.screens.calc.VentanaMates;
-import com.ejemplo.calc.gui.screens.text.VentanaTexto;
-import com.ejemplo.calc.service.CalcClient;
-import com.ejemplo.calc.service.TextClient;
 import com.googlecode.lanterna.TerminalSize;
-import com.googlecode.lanterna.TextColor;
 import com.googlecode.lanterna.gui2.BasicWindow;
 import com.googlecode.lanterna.gui2.Button;
 import com.googlecode.lanterna.gui2.EmptySpace;
@@ -13,129 +8,84 @@ import com.googlecode.lanterna.gui2.GridLayout;
 import com.googlecode.lanterna.gui2.Label;
 import com.googlecode.lanterna.gui2.MultiWindowTextGUI;
 import com.googlecode.lanterna.gui2.Panel;
+import com.googlecode.lanterna.gui2.TextBox;
 import com.googlecode.lanterna.gui2.Window;
-//? pantalla menu en lanterna
+import com.googlecode.lanterna.gui2.BorderLayout;
+import com.googlecode.lanterna.TextColor;
 
+import java.util.List;
+
+//? clase coa ventana inicial do codigo, que só pide un nome de json
+// probablemente podería ser máis bonita
 public class VentanaMain {
 
     private final MultiWindowTextGUI textGUI;
-    private final CalcClient calcClient;
-    private final TextClient textClient;
-    private boolean calcAvailable = false;
-    private boolean textAvailable = false;
-    private Label statusLabel;
-    private Panel buttonPanel;
 
-    public VentanaMain(MultiWindowTextGUI textGUI, CalcClient calcClient, TextClient textClient) {
+    public VentanaMain(MultiWindowTextGUI textGUI) {
         this.textGUI = textGUI;
-        this.calcClient = calcClient;
-        this.textClient = textClient;
-        checkServices();
-    }
-
-    private void checkServices() {
-        // comprobar si están activados y funcionan
-        try {
-            calcAvailable = calcClient.sumar(1, 1) == 2;
-        } catch (Exception e) {
-            calcAvailable = false;
-        }
-
-        // Verificar servicio Texto
-        try {
-            textAvailable = textClient.contarCaracteres("hola") == 4;
-
-        } catch (Exception e) {
-            textAvailable = false;
-        }
-    }
-
-    private void updateUI() {
-        // Actualizar texto de estado
-        StringBuilder status = new StringBuilder("Servicios detectados: ");
-        if (calcAvailable) {
-            status.append("- Calculadora ");
-        }
-        if (textAvailable) {
-            status.append("- Texto ");
-        }
-        if (!calcAvailable && !textAvailable) {
-            status.append("Ningún servidor detectado.");
-        }
-
-        statusLabel.setText(status.toString());
-
-        // Limpiar botones anteriores
-        buttonPanel.removeAllComponents();
-
-        // Añadir solo servicios disponibles
-        if (calcAvailable) {
-            buttonPanel.addComponent(new Button("Calculadora", () -> {
-                VentanaMates aritmetica = new VentanaMates(textGUI, calcClient);
-                aritmetica.show();
-            }));
-        } else {
-            buttonPanel.addComponent(new Label("Calculadora no activada")
-                    .setForegroundColor(TextColor.ANSI.RED));
-        }
-
-        if (textAvailable) {
-            buttonPanel.addComponent(new Button("Analizador de textos", () -> {
-                VentanaTexto textWindow = new VentanaTexto(textGUI, textClient);
-                textWindow.show();
-            }));
-        } else {
-            buttonPanel.addComponent(new Label("Analizador de textos")
-                    .setForegroundColor(TextColor.ANSI.RED));
-        }
-
     }
 
     public void show() {
-        BasicWindow window = new BasicWindow("Servicios SOAP - Menú Principal");
-        window.setHints(java.util.Set.of(Window.Hint.CENTERED));
+        BasicWindow window = new BasicWindow("amanuensis");
+        window.setHints(List.of(Window.Hint.CENTERED));
 
-        Panel mainPanel = new Panel();
-        mainPanel.setLayoutManager(new GridLayout(1));
+        // panel principal
+        Panel root = new Panel(new GridLayout(1));
+        root.setLayoutData(BorderLayout.Location.CENTER);
 
-        // título
-        Label title = new Label("Servicios disponibles:");
-        title.setForegroundColor(TextColor.ANSI.BLUE);
-        title.setLayoutData(GridLayout.createLayoutData(
-                GridLayout.Alignment.CENTER,
-                GridLayout.Alignment.CENTER,
-                true,
-                false
-        ));
-        mainPanel.addComponent(title);
-        mainPanel.addComponent(new EmptySpace(TerminalSize.ONE));
+        // titulo
+        Label title = new Label("Introduce el nombre del archivo (.json)");
+        title.setLayoutData(GridLayout.createLayoutData(GridLayout.Alignment.BEGINNING, GridLayout.Alignment.BEGINNING, true, false));
+        root.addComponent(title);
 
-        // estado de servicios
-        statusLabel = new Label("");
-        statusLabel.setLayoutData(GridLayout.createLayoutData(
-                GridLayout.Alignment.CENTER,
-                GridLayout.Alignment.CENTER,
-                true,
-                false
-        ));
-        mainPanel.addComponent(statusLabel);
-        mainPanel.addComponent(new EmptySpace(TerminalSize.ONE));
+        // input
+        TextBox input = new TextBox(new TerminalSize(40, 1));
+        input.setLayoutData(GridLayout.createLayoutData(GridLayout.Alignment.BEGINNING, GridLayout.Alignment.BEGINNING, true, false));
+        root.addComponent(input);
 
-        // panel para botones de servicios
-        buttonPanel = new Panel();
-        buttonPanel.setLayoutManager(new GridLayout(1));
-        mainPanel.addComponent(buttonPanel);
+        // etiqueta de error (invisible por defecto)
+        Label errorLabel = new Label("");
+        errorLabel.setForegroundColor(TextColor.ANSI.RED);
+        errorLabel.setLayoutData(GridLayout.createLayoutData(GridLayout.Alignment.BEGINNING, GridLayout.Alignment.BEGINNING, true, false));
+        root.addComponent(errorLabel);
 
-        mainPanel.addComponent(new EmptySpace(TerminalSize.ONE));
+        Panel buttons = new Panel(new GridLayout(2));
+        buttons.setLayoutData(GridLayout.createLayoutData(GridLayout.Alignment.END, GridLayout.Alignment.CENTER, true, false));
 
-        mainPanel.addComponent(new EmptySpace(TerminalSize.ONE));
+        Button accept = new Button("aceptar", () -> {
+            String filename = input.getText() != null ? input.getText().trim() : "";
+            if (filename.isEmpty()) {
+                errorLabel.setText("el nombre no puede estar vacío");
+                return;
+            }
+            if (!filename.toLowerCase().endsWith(".json")) {
+                errorLabel.setText("el archivo debe tener extensión .json");
+                return;
+            }
 
-        mainPanel.addComponent(new Button("Salir", window::close));
+            errorLabel.setText("");
 
-        window.setComponent(mainPanel);
+            // crear e mostrar ventana local
+            try {
+                VentanaLocal ventanaLocal = new VentanaLocal(filename, textGUI);
+                // cerrar ventana actual antes de abrir la siguiente
+                window.close();
+                ventanaLocal.show();
+            } catch (Exception e) {
+                errorLabel.setText("error al abrir la ventana local: " + e.getMessage());
+            }
+        });
 
-        // Actualizar UI inicial
-        updateUI();
+        Button cancel = new Button("cancelar", window::close);
+
+        buttons.addComponent(accept);
+        buttons.addComponent(cancel);
+
+        // espacio para separar
+        root.addComponent(new EmptySpace(new TerminalSize(0, 1)));
+        root.addComponent(buttons);
+
+        window.setComponent(root);
 
         textGUI.addWindowAndWait(window);
     }

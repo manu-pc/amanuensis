@@ -1,4 +1,4 @@
-package com;
+package com.local;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
@@ -11,7 +11,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.time.Instant;
-
+//? clase encargada de escribir a copia do arquivo .json coa localizacion
 public class FileCopyManager {
 
     private final LocHelper locHelper;
@@ -39,10 +39,6 @@ public class FileCopyManager {
 
      //devolve a ruta do ficheiro copia sobre a que se están a facer as modificacións
 
-    public Path getCopyPath() {
-        return copyPath;
-    }
-
     public void updateLine(int index, String formattedValue) throws IOException {
         // ler o json da copia
         String jsonText = Files.readString(copyPath);
@@ -54,7 +50,7 @@ public class FileCopyManager {
         // se a clave non existe no ficheiro copia, podemos crearla ou lanzar erro; aquí comprobamos:
         if (!obj.has(key)) {
             // intentar buscar por orde: como fallback, lemos as chaves por orde e substituimos pola posición index
-            // isto é improbable se locHelper e a copia viñeron do mesmo ficheiro, pero por seguridade:
+            // isto é improbable se locHelper e a copia viñeron do mesmo ficheiro, pero por se aca:
             JsonObject newObj = new JsonObject();
             int i = 0;
             for (String k : obj.keySet()) {
