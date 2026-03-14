@@ -9,6 +9,8 @@ import com.googlecode.lanterna.input.KeyStroke;
 import com.googlecode.lanterna.input.KeyType;
 
 import java.io.IOException;
+import java.time.LocalTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -31,6 +33,7 @@ public class VentanaLocal {
     private InterceptingTextBox editBox;
     private Label previewLabel;  // Mostra preview do resultado
     private Label reappliedLabel;
+    private Label timeLabel;
 
     // goto e search
     private GotoTextBox gotoBox;
@@ -128,7 +131,7 @@ public class VentanaLocal {
         root.setLayoutManager(new GridLayout(1));
 
         // ---------- nav bar (fila de botones) ----------
-        Panel navBar = new Panel(new GridLayout(8));
+        Panel navBar = new Panel(new GridLayout(9));
         Button prevBtn = new Button("<< anterior", this::prevLine);
         Button nextBtn = new Button("siguiente >>", this::nextLine);
         Button gotoEnd = new Button("ir a fin", () -> {
@@ -157,7 +160,9 @@ public class VentanaLocal {
         navBar.addComponent(gotoPanel);
         navBar.addComponent(baseCheckBox);
         navBar.addComponent(new EmptySpace(new TerminalSize(1,1)));
-        navBar.addComponent(new EmptySpace(new TerminalSize(1,1)));
+        timeLabel = new Label("");
+        timeLabel.setForegroundColor(TextColor.ANSI.CYAN);
+        navBar.addComponent(timeLabel);
         navBar.addComponent(indexLabel);
 
         root.addComponent(navBar);
@@ -380,7 +385,8 @@ public class VentanaLocal {
             return;
         }
 
-        // actualizar índice
+        // actualizar hora e índice
+        timeLabel.setText(LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm")));
         indexLabel.setText(String.format("%d / %d", currentIndex + 1, total));
 
         // obter datos do locHelper
@@ -397,11 +403,13 @@ public class VentanaLocal {
         boolean hasPause = locHelper.hasPauseMarkers(currentIndex);
         boolean hasTilde = locHelper.hasTildeMarkers(currentIndex);
         boolean hasBackslashO = locHelper.hasBackslashOMarkers(currentIndex);
+        boolean hasBackslashI = locHelper.hasBackslashIMarkers(currentIndex);
         StringBuilder info = new StringBuilder();
         info.append("[").append(newlineCount).append(" liñas]");
         if (hasColor) info.append(" [cor *]");
         if (hasTilde) info.append(" [efecto ~]");
         if (hasBackslashO) info.append(" [\\O @]");
+        if (hasBackslashI) info.append(" [\\I $]");
         if (hasPause) info.append(" [pausa]");
         infoLabel.setText(info.toString());
 

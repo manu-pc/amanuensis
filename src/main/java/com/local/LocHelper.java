@@ -36,6 +36,7 @@ import java.util.Map;
  * coloreado)
  * - ~ : placeholder para marcadores ~n (relocatable)
  * - @ : placeholder para marcadores \On (relocatable)
+ * - $ : placeholder para marcadores \In (relocatable)
  */
 @SuppressWarnings("StatementWithEmptyBody")
 public class LocHelper {
@@ -149,6 +150,22 @@ public class LocHelper {
         return markers;
     }
 
+    /**
+     * Extrae os marcadores \I dunha liña na orde en que aparecen.
+     * Devolve unha lista de strings (ex: ["\\I0", "\\I1"]).
+     */
+    private List<String> extractBackslashIMarkers(int lineIndex) {
+        String original = originals.get(lineIndex);
+        List<Token> tokens = tokenize(original);
+        List<String> markers = new ArrayList<>();
+        for (Token t : tokens) {
+            if (isBackslashIToken(t)) {
+                markers.add(t.text());
+            }
+        }
+        return markers;
+    }
+
     private static boolean isColorToken(Token t) {
         return t.type() == TokenType.FORMAT &&
                 (t.text().startsWith("\\c") || t.text().startsWith("\\C"));
@@ -160,6 +177,10 @@ public class LocHelper {
 
     private static boolean isBackslashOToken(Token t) {
         return t.type() == TokenType.FORMAT && t.text().startsWith("\\O");
+    }
+
+    private static boolean isBackslashIToken(Token t) {
+        return t.type() == TokenType.FORMAT && t.text().startsWith("\\I");
     }
 
     /**
@@ -184,6 +205,14 @@ public class LocHelper {
     public boolean hasBackslashOMarkers(int lineIndex) {
         String original = originals.get(lineIndex);
         return original.contains("\\O");
+    }
+
+    /**
+     * Devolve true se a liña contén marcadores \I (ex: \I0, \I1).
+     */
+    public boolean hasBackslashIMarkers(int lineIndex) {
+        String original = originals.get(lineIndex);
+        return original.contains("\\I");
     }
 
     /**
@@ -429,6 +458,7 @@ public class LocHelper {
      * - ^n → ignorados (son pausas)
      * - ~n → placeholder ~ (relocatable, como cores)
      * - \On → placeholder @ (relocatable, como cores)
+     * - \In → placeholder $ (relocatable, como cores)
      * - \E, \M, \c, \C, etc. → ignorados
      * - /, /%, %, %% → ignorados
      * - \" → "
@@ -471,6 +501,9 @@ public class LocHelper {
             } else if (isBackslashOToken(t)) {
                 // Marcador \On: inserir @ como placeholder relocatable
                 sb.append("@");
+            } else if (isBackslashIToken(t)) {
+                // Marcador \In: inserir $ como placeholder relocatable
+                sb.append("$");
             }
             // PENDING (^n), FORMAT (non-relocatable) e END non producen texto visible
         }
@@ -511,12 +544,14 @@ public class LocHelper {
         List<String> colorMarkers = extractColorMarkers(lineIndex);
         List<String> tildeMarkers = extractTildeMarkers(lineIndex);
         List<String> backslashOMarkers = extractBackslashOMarkers(lineIndex);
-        boolean hasRelocatable = !colorMarkers.isEmpty() || !tildeMarkers.isEmpty() || !backslashOMarkers.isEmpty();
+        List<String> backslashIMarkers = extractBackslashIMarkers(lineIndex);
+        boolean hasRelocatable = !colorMarkers.isEmpty() || !tildeMarkers.isEmpty()
+                || !backslashOMarkers.isEmpty() || !backslashIMarkers.isEmpty();
 
         // Se hai marcadores relocatables, procesamento especial
         if (hasRelocatable) {
             return reapplyFormattingWithRelocatable(lineIndex, newPlain, tokens,
-                    colorMarkers, tildeMarkers, backslashOMarkers);
+                    colorMarkers, tildeMarkers, backslashOMarkers, backslashIMarkers);
         }
 
         // Se non hai marcadores relocatables, procesamento normal
@@ -529,10 +564,12 @@ public class LocHelper {
      *   * → marcadores de cor (\c, \C)
      *   ~ → marcadores de efecto (~n)
      *   @ → marcadores \On
+     *   $ → marcadores \In
      */
     private String reapplyFormattingWithRelocatable(int lineIndex, String newPlain,
             List<Token> tokens, List<String> colorMarkers,
-            List<String> tildeMarkers, List<String> backslashOMarkers) {
+            List<String> tildeMarkers, List<String> backslashOMarkers,
+            List<String> backslashIMarkers) {
         // Separar o newPlain en segmentos por liñas
         String[] userLines = newPlain.split("\n", -1);
 
@@ -540,6 +577,7 @@ public class LocHelper {
         int colorIdx = 0;
         int tildeIdx = 0;
         int backslashOIdx = 0;
+        int backslashIIdx = 0;
 
         // Recoller os marcadores de newline orixinais
         List<String> newlineMarkers = new ArrayList<>();
@@ -553,7 +591,7 @@ public class LocHelper {
         List<Token> fixedFormatTokens = new ArrayList<>();
         List<Token> pendingTokens = new ArrayList<>();
         for (Token t : tokens) {
-            if (t.type() == TokenType.FORMAT && !isColorToken(t) && !isBackslashOToken(t)) {
+            if (t.type() == TokenType.FORMAT && !isColorToken(t) && !isBackslashOToken(t) && !isBackslashIToken(t)) {
                 fixedFormatTokens.add(t);
             } else if (t.type() == TokenType.PENDING && !isTildeToken(t)) {
                 pendingTokens.add(t);
@@ -587,6 +625,9 @@ public class LocHelper {
                 } else if (ch == '@' && backslashOIdx < backslashOMarkers.size()) {
                     // Reemplazar @ con marcador \On
                     out.append(backslashOMarkers.get(backslashOIdx++));
+                } else if (ch == '$' && backslashIIdx < backslashIMarkers.size()) {
+                    // Reemplazar $ con marcador \In
+                    out.append(backslashIMarkers.get(backslashIIdx++));
                 } else {
                     // Comprobar se podemos inserir tokens pending (límite de palabra)
                     boolean chIsLetter = Character.isLetter(ch);
