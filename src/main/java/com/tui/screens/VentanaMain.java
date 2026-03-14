@@ -13,6 +13,9 @@ import com.googlecode.lanterna.gui2.Window;
 import com.googlecode.lanterna.gui2.BorderLayout;
 import com.googlecode.lanterna.TextColor;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 
 //? clase coa ventana inicial do codigo, que só pide un nome de json
@@ -65,14 +68,28 @@ public class VentanaMain {
 
             errorLabel.setText("");
 
+            // validar que o ficheiro existe e é lexible antes de abrir
+            Path filePath = Path.of(filename);
+            if (!Files.exists(filePath)) {
+                errorLabel.setText("o ficheiro non existe: " + filename);
+                return;
+            }
+            if (!Files.isReadable(filePath)) {
+                errorLabel.setText("o ficheiro non se pode ler: " + filename);
+                return;
+            }
+
             // crear e mostrar ventana local
             try {
                 VentanaLocal ventanaLocal = new VentanaLocal(filename, textGUI);
-                // cerrar ventana actual antes de abrir la siguiente
                 window.close();
                 ventanaLocal.show();
+            } catch (IOException e) {
+                errorLabel.setText("erro de E/S: " + e.getMessage());
+            } catch (com.google.gson.JsonSyntaxException e) {
+                errorLabel.setText("JSON non válido: " + e.getMessage());
             } catch (Exception e) {
-                errorLabel.setText("error al abrir la ventana local: " + e.getMessage());
+                errorLabel.setText("erro inesperado: " + e.getClass().getSimpleName() + " - " + e.getMessage());
             }
         });
 

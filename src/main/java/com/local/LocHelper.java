@@ -4,34 +4,51 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-//? clase encargada do manexo de simbolos marcadores de texto. fai:
-    // texto orixinal --> texto sin marcadores  (stripFormatting)
-    // texto sin marcadores modificado --> texto con marcadores modificado (reapplyFormatting)
-    // permitindo así modificar/traducir texto de forma cómoda
 
-
-//! detecta os indicadores de formato usados para strings en Undertale e Deltarune.
-    // ver comentario en stripFormatting para ver o formato exacto
-    // modificar os 2 metodos mencionados para adaptalo a un texto con distinto formato
-
-
+/**
+ * Clase encargada do manexo de simbolos marcadores de texto para
+ * Undertale/Deltarune.
+ *
+ * Funcións principais:
+ * - texto orixinal --> texto sen marcadores (stripFormatting)
+ * - texto sen marcadores modificado --> texto con marcadores
+ * (reapplyFormatting)
+ *
+ * Marcadores soportados:
+ * - \cXXX, \CXXX : cor de texto (ex: \cYLANCER, \cW)
+ * - \En : expresión/sprite do personaxe (ex: \E0, \E8)
+ * - \Mn : modo de voz (ex: \M0, \M1)
+ * - \R, \ER, etc. : outros modificadores
+ * - ^n : pausa de n frames (ex: ^1, ^3)
+ * - ~n : efecto de texto (ex: ~1)
+ * - & : salto de liña (newline)
+ * - # : salto de liña (newline, alternativo)
+ * - \n : salto de liña literal no JSON
+ * - / /% % %% : marcadores de fin de texto
+ * - \" : comilla escapada (visible como ")
+ * - *texto* : marcador de cor (o usuario usa asteriscos para indicar texto
+ * coloreado)
+ * - ~ : placeholder para marcadores ~n (relocatable)
+ * - @ : placeholder para marcadores \On (relocatable)
+ */
 @SuppressWarnings("StatementWithEmptyBody")
 public class LocHelper {
     private final String filename;
-    private final List<String> keys = new ArrayList<>();       // claves na orde do ficheiro
-    private final List<String> originals = new ArrayList<>();  // valores orixinais na orde do ficheiro
+    private final List<String> keys = new ArrayList<>(); // claves na orde do ficheiro
+    private final List<String> originals = new ArrayList<>(); // valores orixinais na orde do ficheiro
 
-    public LocHelper(String filename) throws Exception {
+    public LocHelper(String filename) throws IOException {
         this.filename = filename;
         readAndParseFile();
     }
 
-    private void readAndParseFile() throws Exception {
+    private void readAndParseFile() throws IOException {
         String jsonText = Files.readString(Path.of(filename));
         JsonObject obj = JsonParser.parseString(jsonText).getAsJsonObject();
 
@@ -54,21 +71,170 @@ public class LocHelper {
     }
 
     /**
-     * @param isVisible        true: representa un carácter visible (1 char) ; false: token de formato
-     * @param text             para visible: un único char (ou "\""); para formato: o token (ex: "\E1", "^1", "&", "%%")
-     * @param placeholderCount cantidade de caracteres que este token produciu no texto limpo (por exemplo '&' -> 1 espazo)
-     */ // token e parser
-        private record Token(boolean isVisible, String text, int placeholderCount) {
+     * Actualiza o valor orixinal en memoria para a liña indicada.
+     * Útil para manter a lista en sincronía despois de gardar cambios.
+     */
+    public void updateOriginal(int lineIndex, String newValue) {
+        originals.set(lineIndex, newValue);
+    }
 
-        Token(boolean isVisible, String text) {
-                this(isVisible, text, 0);
-            }
+    /**
+     * Conta o número de saltos de liña (newline markers) no texto orixinal.
+     * Útil para que o usuario saiba cantas liñas ten o texto orixinal.
+     */
+    public int countNewlines(int lineIndex) {
+        String original = originals.get(lineIndex);
+        List<Token> tokens = tokenize(original);
+        int count = 0;
+        for (Token t : tokens) {
+            if (t.isNewline())
+                count++;
+        }
+        return count;
+    }
 
-            @Override
-            public String toString() {
-                return (isVisible ? "V(" + text + ")" : "F(" + text + (placeholderCount > 0 ? ",ph=" + placeholderCount : "") + ")");
+    /**
+     * Devolve true se a liña contén marcadores de cor (\c ou \C).
+     */
+    public boolean hasColorMarkers(int lineIndex) {
+        String original = originals.get(lineIndex);
+        return original.contains("\\c") || original.contains("\\C");
+    }
+
+    /**
+     * Extrae os marcadores de cor dunha liña na orde en que aparecen.
+     * Devolve unha lista de strings (ex: ["\\cY", "\\cW"]).
+     */
+    private List<String> extractColorMarkers(int lineIndex) {
+        String original = originals.get(lineIndex);
+        List<Token> tokens = tokenize(original);
+        List<String> colors = new ArrayList<>();
+        for (Token t : tokens) {
+            if (isColorToken(t)) {
+                colors.add(t.text());
             }
         }
+        return colors;
+    }
+
+    /**
+     * Extrae os marcadores ~ dunha liña na orde en que aparecen.
+     * Devolve unha lista de strings (ex: ["~1", "~2"]).
+     */
+    private List<String> extractTildeMarkers(int lineIndex) {
+        String original = originals.get(lineIndex);
+        List<Token> tokens = tokenize(original);
+        List<String> tildes = new ArrayList<>();
+        for (Token t : tokens) {
+            if (isTildeToken(t)) {
+                tildes.add(t.text());
+            }
+        }
+        return tildes;
+    }
+
+    /**
+     * Extrae os marcadores \O dunha liña na orde en que aparecen.
+     * Devolve unha lista de strings (ex: ["\\O0", "\\O1"]).
+     */
+    private List<String> extractBackslashOMarkers(int lineIndex) {
+        String original = originals.get(lineIndex);
+        List<Token> tokens = tokenize(original);
+        List<String> markers = new ArrayList<>();
+        for (Token t : tokens) {
+            if (isBackslashOToken(t)) {
+                markers.add(t.text());
+            }
+        }
+        return markers;
+    }
+
+    private static boolean isColorToken(Token t) {
+        return t.type() == TokenType.FORMAT &&
+                (t.text().startsWith("\\c") || t.text().startsWith("\\C"));
+    }
+
+    private static boolean isTildeToken(Token t) {
+        return t.type() == TokenType.PENDING && t.text().startsWith("~");
+    }
+
+    private static boolean isBackslashOToken(Token t) {
+        return t.type() == TokenType.FORMAT && t.text().startsWith("\\O");
+    }
+
+    /**
+     * Devolve true se a liña contén marcadores de pausa (^n).
+     */
+    public boolean hasPauseMarkers(int lineIndex) {
+        String original = originals.get(lineIndex);
+        return original.contains("^");
+    }
+
+    /**
+     * Devolve true se a liña contén marcadores ~n (efecto de texto).
+     */
+    public boolean hasTildeMarkers(int lineIndex) {
+        String original = originals.get(lineIndex);
+        return original.contains("~");
+    }
+
+    /**
+     * Devolve true se a liña contén marcadores \O (ex: \O0, \O1).
+     */
+    public boolean hasBackslashOMarkers(int lineIndex) {
+        String original = originals.get(lineIndex);
+        return original.contains("\\O");
+    }
+
+    /**
+     * Tipos de token para clasificar o comportamento no reapply:
+     * - VISIBLE: carácter visible (aparece no texto limpo)
+     * - FORMAT: marcador de formato (non visible, posición fixa)
+     * - PENDING: marcador que se insire en límites de palabra (^n, ~n)
+     * - NEWLINE: marcador que produce salto de liña (&, #, \n literal)
+     * - END: marcador de fin de texto (/, /%, %, %%)
+     */
+    private enum TokenType {
+        VISIBLE,
+        FORMAT,
+        PENDING,
+        NEWLINE,
+        END
+    }
+
+    /**
+     * @param type      tipo de token
+     * @param text      para VISIBLE: un único char (ou "\""); para outros: o token
+     *                  completo
+     * @param cleanText texto que este token produce no texto limpo (normalmente ""
+     *                  ou "\n")
+     */
+    private record Token(TokenType type, String text, String cleanText) {
+        Token(TokenType type, String text) {
+            this(type, text, "");
+        }
+
+        boolean isVisible() {
+            return type == TokenType.VISIBLE;
+        }
+
+        boolean isPending() {
+            return type == TokenType.PENDING;
+        }
+
+        boolean isNewline() {
+            return type == TokenType.NEWLINE;
+        }
+
+        boolean isEnd() {
+            return type == TokenType.END;
+        }
+
+        @Override
+        public String toString() {
+            return type + "(" + text + (cleanText.isEmpty() ? "" : ",clean=" + cleanText.replace("\n", "\\n")) + ")";
+        }
+    }
 
     private static List<Token> tokenize(String s) {
         List<Token> out = new ArrayList<>();
@@ -105,27 +271,86 @@ public class LocHelper {
 
         int i = 0;
         int n = s.length();
+
+        // Detectar "* " ao inicio da liña como token de formato fixo
+        // (indicador de diálogo, non debe confundirse co placeholder de cor)
+        if (n >= 2 && s.charAt(0) == '*' && s.charAt(1) == ' ') {
+            out.add(new Token(TokenType.FORMAT, "* "));
+            i = 2;
+        }
+
         while (i < n) {
             char c = s.charAt(i);
 
+            // Salto de liña literal (carácter \n real no string)
+            if (c == '\n') {
+                out.add(new Token(TokenType.NEWLINE, "\n", "\n"));
+                i++;
+                continue;
+            }
+
+            // Marcador # = salto de liña
+            if (c == '#') {
+                out.add(new Token(TokenType.NEWLINE, "#", "\n"));
+                i++;
+                continue;
+            }
+
+            // Marcador & = salto de liña
+            if (c == '&') {
+                out.add(new Token(TokenType.NEWLINE, "&", "\n"));
+                i++;
+                continue;
+            }
+
+            // Secuencias con backslash
             if (c == '\\') {
                 int j = i + 1;
+
                 // escaped quote \" -> visible quote
                 if (j < n && s.charAt(j) == '"') {
-                    out.add(new Token(true, "\""));
+                    out.add(new Token(TokenType.VISIBLE, "\""));
                     i = j + 1;
                     continue;
                 }
 
-                // detectar \ + letters (+ digits) patrón (ex: \E8, \M0, \cRHEART)
+                // \n literal no código fonte (2 caracteres: '\' e 'n')
+                // Nota: isto normalmente non ocorre porque GSON xa parsea \n como newline real
+                // pero por se acaso alguén usa \\n no JSON
+                if (j < n && s.charAt(j) == 'n') {
+                    out.add(new Token(TokenType.NEWLINE, "\\n", "\n"));
+                    i = j + 1;
+                    continue;
+                }
+
+                // CASO ESPECIAL: Marcadores de cor \c ou \C
+                // Formato: \c seguido de EXACTAMENTE un carácter (ex: \cY, \cW, \cR)
+                if (j < n && (s.charAt(j) == 'c' || s.charAt(j) == 'C')) {
+                    if (j + 1 < n) {
+                        // \c + un carácter = token completo
+                        String tok = s.substring(i, j + 2); // ex: \cY
+                        out.add(new Token(TokenType.FORMAT, tok));
+                        i = j + 2;
+                        continue;
+                    } else {
+                        // \c ao final do string (caso edge)
+                        String tok = s.substring(i, j + 1);
+                        out.add(new Token(TokenType.FORMAT, tok));
+                        i = j + 1;
+                        continue;
+                    }
+                }
+
+                // detectar \ + letters (+ digits) patrón (ex: \E8, \M0, \R)
                 int startLetters = j;
                 while (startLetters < n && Character.isLetter(s.charAt(startLetters))) startLetters++;
 
                 if (startLetters == j) {
+                    // non hai letras despois de \, buscar ata o próximo \ ou espazo
                     int k = j;
                     while (k < n && s.charAt(k) != '\\' && !Character.isWhitespace(s.charAt(k))) k++;
                     String tok = s.substring(i, k);
-                    out.add(new Token(false, tok, 0));
+                    out.add(new Token(TokenType.FORMAT, tok));
                     i = k;
                     continue;
                 }
@@ -134,42 +359,50 @@ public class LocHelper {
                 while (k < n && Character.isDigit(s.charAt(k))) k++;
 
                 String tok = s.substring(i, k);
-                if (k < n && Character.isLetter(s.charAt(k))) {
-                    int kk = k;
-                    while (kk < n && s.charAt(kk) != '\\' && !Character.isWhitespace(s.charAt(kk))) kk++;
-                    tok = s.substring(i, kk);
-                    out.add(new Token(false, tok, 0));
-                    i = kk;
-                    continue;
-                }
 
-                // caso especial: \E8* → token \E8 e '*' como visible
+                // caso especial: \E3* Hello → \E3 (FORMAT) + "* " (FORMAT fixo)
+                // \E8*text → \E8 (FORMAT) + * (VISIBLE)
                 if (k < n && s.charAt(k) == '*') {
-                    out.add(new Token(false, tok, 0));
-                    out.add(new Token(true, "*", 0));
-                    i = k + 1;
+                    out.add(new Token(TokenType.FORMAT, tok));
+                    if (k + 1 < n && s.charAt(k + 1) == ' ') {
+                        // "* " é token de formato fixo (indicador de diálogo)
+                        out.add(new Token(TokenType.FORMAT, "* "));
+                        i = k + 2;
+                    } else {
+                        out.add(new Token(TokenType.VISIBLE, "*"));
+                        i = k + 1;
+                    }
                     continue;
                 }
 
-                out.add(new Token(false, tok, 0));
+                out.add(new Token(TokenType.FORMAT, tok));
                 i = k;
-            } else if (c == '^') {
+            }
+            // Marcadores ^n (pausa)
+            else if (c == '^') {
                 int j = i + 1;
                 while (j < n && Character.isDigit(s.charAt(j))) j++;
                 String tok = s.substring(i, j); // ex: ^1
-                out.add(new Token(false, tok, 0));
+                out.add(new Token(TokenType.PENDING, tok));
                 i = j;
-            } else if (c == '&') {
-                out.add(new Token(false, "&", 1));
-                i++;
-            } else {
-                out.add(new Token(true, String.valueOf(c), 0));
+            }
+            // Marcadores ~n (efecto de texto)
+            else if (c == '~') {
+                int j = i + 1;
+                while (j < n && Character.isDigit(s.charAt(j))) j++;
+                String tok = s.substring(i, j); // ex: ~1
+                out.add(new Token(TokenType.PENDING, tok));
+                i = j;
+            }
+            // Calquera outro carácter = visible
+            else {
+                out.add(new Token(TokenType.VISIBLE, String.valueOf(c)));
                 i++;
             }
         }
 
         if (endMarker != null && !endMarker.isEmpty()) {
-            out.add(new Token(false, endMarker, 0));
+            out.add(new Token(TokenType.END, endMarker));
         }
 
         return out;
@@ -177,7 +410,8 @@ public class LocHelper {
 
     private static String rtrim(String s) {
         int i = s.length() - 1;
-        while (i >= 0 && Character.isWhitespace(s.charAt(i))) i--;
+        while (i >= 0 && Character.isWhitespace(s.charAt(i)))
+            i--;
         return s.substring(0, i + 1);
     }
 
@@ -185,157 +419,388 @@ public class LocHelper {
     // métodos de instancia que usan as liñas cargadas
     // -------------------------
 
-    // devolve o texto plano sen marcadores da liña index (0-based)
-
-    // regras aplicadas:
-    /* - & -> ' ' (espazo)
-     - ^n non produce newline no texto limpo (é ignorado)
-    - tokens \M0, \M1, \E1, \c... non aparecen
-     - marcadores finais de % non aparecen no texto limpo */
-
-    // exemplo:
-    //? \E0* Sure..^1. okay^1, we can try again./%
-    //! Sure... Okay, we can try again.
-
+    /**
+     * Devolve o texto plano sen marcadores da liña index (0-based).
+     *
+     * Regras aplicadas:
+     * - & → newline
+     * - # → newline
+     * - \n (literal) → newline
+     * - ^n → ignorados (son pausas)
+     * - ~n → placeholder ~ (relocatable, como cores)
+     * - \On → placeholder @ (relocatable, como cores)
+     * - \E, \M, \c, \C, etc. → ignorados
+     * - /, /%, %, %% → ignorados
+     * - \" → "
+     *
+     * CASO ESPECIAL - Marcadores de cor:
+     * Se a liña contén marcadores \c ou \C, o texto coloreado rodéase con
+     * asteriscos.
+     * Exemplo:
+     * Orixinal: SUSIE GOT THE \cYPOWER CROISSANT\cW
+     * Limpo: SUSIE GOT THE *POWER CROISSANT*
+     *
+     * Exemplo:
+     * Orixinal: \E0* Sure..^1. okay^1, we can try again./%
+     * Limpo: * Sure... okay, we can try again.
+     *
+     * Orixinal: Ah, podo#moverme. Mola.
+     * Limpo: Ah, podo
+     * moverme. Mola.
+     */
     public String stripFormatting(int lineIndex) {
         String original = originals.get(lineIndex);
         List<Token> tokens = tokenize(original);
         StringBuilder sb = new StringBuilder();
+
+        boolean insideColor = false;
+
         for (Token t : tokens) {
-            if (t.isVisible) {
-                sb.append(t.text);
-            } else {
-                // tokens de formato que xeran placeholders no texto limpo
-                if ("&".equals(t.text)) {
-                    // & -> espazo placeholder
-                    sb.append(' ');
-                } else {
-                    // completa como quiras!
-                }
+            if (t.isVisible()) {
+                sb.append(t.text());
+            } else if (t.isNewline()) {
+                // & # \n → salto de liña
+                sb.append(t.cleanText());
+            } else if (isColorToken(t)) {
+                // Marcador de cor: inserir asterisco
+                sb.append("*");
+                insideColor = !insideColor;
+            } else if (isTildeToken(t)) {
+                // Marcador ~n: inserir ~ como placeholder relocatable
+                sb.append("~");
+            } else if (isBackslashOToken(t)) {
+                // Marcador \On: inserir @ como placeholder relocatable
+                sb.append("@");
             }
+            // PENDING (^n), FORMAT (non-relocatable) e END non producen texto visible
         }
+
         return sb.toString();
     }
 
-    // a partir de unha liña sen indicadores de formato, e a posición da liña orixinal,
-    // reaplica os indicadores de formato que require esa liña.
-
-    // exemplo:
-    //? Liña orixinal: \E0* Sure..^1. okay^1, we can try again./%
-    //* Entrada usuario: Si... Vale, podémolo tentar outra vez.
-    //! Salida función: \E0* Si... ^1Vale, ^1podémolo tentar outra vez./%
-
+    /**
+     * A partir dunha liña sen indicadores de formato e a posición da liña orixinal,
+     * reaplica os indicadores de formato que require esa liña.
+     *
+     * Estratexia:
+     * 1. Os marcadores de formato (\E, \M, etc.) insírense nas mesmas posicións
+     * relativas
+     * 2. Os marcadores de cor (\c, \C) tráctanse especialmente:
+     * - O usuario marca o texto coloreado con asteriscos
+     * - Os asteriscos reemplázanse polos marcadores de cor orixinais
+     * 3. Os marcadores ~n tráctanse como relocatables (placeholder ~)
+     * 4. Os marcadores \On tráctanse como relocatables (placeholder @)
+     * 5. Os marcadores pending (^n) insírense en límites de palabra
+     * 6. Os saltos de liña do usuario (\n) convértense no marcador orixinal (&, #,
+     * ou \n)
+     * 7. O marcador de fin engádese ao final
+     *
+     * Exemplo con cores:
+     * Orixinal: SUSIE GOT THE \cYPOWER CROISSANT\cW
+     * Usuario: SUSIE RECIBIÓ EL *CRUASÁN DE PODER*
+     * Resultado: SUSIE RECIBIÓ EL \cYCRUASÁN DE PODER\cW
+     */
     public String reapplyFormatting(int lineIndex, String newPlain) {
         String original = originals.get(lineIndex);
         List<Token> tokens = tokenize(original);
 
-        char[] plainChars = newPlain == null ? new char[0] : newPlain.toCharArray();
-        int p = 0, plen = plainChars.length;
+        if (newPlain == null)
+            newPlain = "";
+
+        // Comprobar se esta liña ten marcadores relocatables
+        List<String> colorMarkers = extractColorMarkers(lineIndex);
+        List<String> tildeMarkers = extractTildeMarkers(lineIndex);
+        List<String> backslashOMarkers = extractBackslashOMarkers(lineIndex);
+        boolean hasRelocatable = !colorMarkers.isEmpty() || !tildeMarkers.isEmpty() || !backslashOMarkers.isEmpty();
+
+        // Se hai marcadores relocatables, procesamento especial
+        if (hasRelocatable) {
+            return reapplyFormattingWithRelocatable(lineIndex, newPlain, tokens,
+                    colorMarkers, tildeMarkers, backslashOMarkers);
+        }
+
+        // Se non hai marcadores relocatables, procesamento normal
+        return reapplyFormattingNormal(lineIndex, newPlain, tokens);
+    }
+
+    /**
+     * Procesamento especial para liñas con marcadores relocatables.
+     * Placeholders no input do usuario:
+     *   * → marcadores de cor (\c, \C)
+     *   ~ → marcadores de efecto (~n)
+     *   @ → marcadores \On
+     */
+    private String reapplyFormattingWithRelocatable(int lineIndex, String newPlain,
+            List<Token> tokens, List<String> colorMarkers,
+            List<String> tildeMarkers, List<String> backslashOMarkers) {
+        // Separar o newPlain en segmentos por liñas
+        String[] userLines = newPlain.split("\n", -1);
 
         StringBuilder out = new StringBuilder();
+        int colorIdx = 0;
+        int tildeIdx = 0;
+        int backslashOIdx = 0;
 
-        // lista para gardar ^n e outros placeholders (ex: '&') que non queremos inserir no medio dunha palabra
-        List<String> pendingPlaceholders = new ArrayList<>();
-
-        // último carácter visible que puxemos ao out (ou null se non hai)
-        var lambdaContext = new Object() {
-            Character lastOutChar = null;
-        };
-
-        // util: comprobar se un char é letra (inclúe acentos)
-        java.util.function.Predicate<Character> isLetter = ch -> ch != null && Character.isLetter(ch);
-
-        // vaciar pendingPlaceholders ao out
-        Runnable flushPending = () -> {
-            for (String c : pendingPlaceholders) {
-                out.append(c);
-                if (!c.isEmpty()) lambdaContext.lastOutChar = c.charAt(c.length() - 1);
-            }
-            pendingPlaceholders.clear();
-        };
-
+        // Recoller os marcadores de newline orixinais
+        List<String> newlineMarkers = new ArrayList<>();
         for (Token t : tokens) {
-            if (!t.isVisible) {
-                // caret (^n): gardar como pending en vez de inserilo inmediatamente
-                if (t.text.startsWith("^")) {
-                    pendingPlaceholders.add(t.text);
-                    continue;
+            if (t.isNewline()) {
+                newlineMarkers.add(t.text());
+            }
+        }
+
+        // Recoller marcadores FORMAT non-relocatable e PENDING non-relocatable (^n)
+        List<Token> fixedFormatTokens = new ArrayList<>();
+        List<Token> pendingTokens = new ArrayList<>();
+        for (Token t : tokens) {
+            if (t.type() == TokenType.FORMAT && !isColorToken(t) && !isBackslashOToken(t)) {
+                fixedFormatTokens.add(t);
+            } else if (t.type() == TokenType.PENDING && !isTildeToken(t)) {
+                pendingTokens.add(t);
+            }
+        }
+
+        // Procesar cada liña do usuario
+        for (int lineNum = 0; lineNum < userLines.length; lineNum++) {
+            String userLine = userLines[lineNum];
+
+            // Inserir marcadores FORMAT fixos ao inicio se é a primeira liña
+            if (lineNum == 0) {
+                for (Token fmt : fixedFormatTokens) {
+                    out.append(fmt.text());
                 }
+            }
 
-                // placeholder tokens (ex: '&') — consumen caracteres do newPlain pero non se inseren agora,
-                // engádense a pendingPlaceholders para insertalos nun límite de palabra posterior.
-                if (t.placeholderCount > 0) {
-                    for (int k = 0; k < t.placeholderCount; k++) {
-                        if (p < plen) p++; // consumir placeholder chars do newPlain (esperando espazos normalmente)
+            // Procesar a liña carácter por carácter
+            List<Token> pendingToInsert = new ArrayList<>(pendingTokens);
+            Character lastChar = null;
+
+            for (int i = 0; i < userLine.length(); i++) {
+                char ch = userLine.charAt(i);
+
+                if (ch == '*' && colorIdx < colorMarkers.size()) {
+                    // Reemplazar asterisco con marcador de cor
+                    out.append(colorMarkers.get(colorIdx++));
+                } else if (ch == '~' && tildeIdx < tildeMarkers.size()) {
+                    // Reemplazar ~ con marcador ~n
+                    out.append(tildeMarkers.get(tildeIdx++));
+                } else if (ch == '@' && backslashOIdx < backslashOMarkers.size()) {
+                    // Reemplazar @ con marcador \On
+                    out.append(backslashOMarkers.get(backslashOIdx++));
+                } else {
+                    // Comprobar se podemos inserir tokens pending (límite de palabra)
+                    boolean chIsLetter = Character.isLetter(ch);
+                    boolean lastIsLetter = lastChar != null && Character.isLetter(lastChar);
+
+                    if (!pendingToInsert.isEmpty() && (!lastIsLetter || !chIsLetter)) {
+                        for (Token pt : pendingToInsert) {
+                            out.append(pt.text());
+                        }
+                        pendingToInsert.clear();
                     }
-                    // non flush aquí: gardámolo como pending para evitar cortar palabras
-                    pendingPlaceholders.add(t.text);
-                    continue;
-                }
 
-                // se é marcador final tipo "/" ou "/%" ou composto de '%' (ex: "%%")
-                boolean isEndMarker = t.text.equals("/") || t.text.equals("/%") || t.text.matches("%+");
-                if (isEndMarker) {
-                    // primeiro engadir calquera carácter sobrante en newPlain
-                    if (p < plen) {
-                        out.append(new String(plainChars, p, plen - p));
-                        p = plen;
-                    }
-                    // logo insertar os placeholders pendentes (se hai)
-                    flushPending.run();
-                    // e finalmente o marcador final
-                    out.append(t.text);
-                    continue;
-                }
-
-                // outros tokens de formato (p.ex \M0, \E1, etc.)
-                // antes de inserir, flush pending (non queremos deixalos por detrás doutros tokens)
-                flushPending.run();
-                out.append(t.text);
-                if (!t.text.isEmpty()) lambdaContext.lastOutChar = t.text.charAt(t.text.length() - 1);
-            } else {
-                // token visible: substituír pola próxima letra dispoñible en newPlain
-                if (p < plen) {
-                    char ch = plainChars[p++];
-
-                    // decidir se inserir pendingPlaceholders antes deste carácter
-                    boolean chIsLetter = isLetter.test(ch);
-                    boolean lastIsLetter = isLetter.test(lambdaContext.lastOutChar);
-
-                    if (!lastIsLetter || !chIsLetter) {
-                        // hai unha barreira: podemos inserir os placeholders pendentes agora
-                        flushPending.run();
-                    }
-                    // inserir o carácter (escapando " se é preciso)
+                    // Escapar comillas
                     if (ch == '"') {
                         out.append("\\\"");
-                        lambdaContext.lastOutChar = '"';
                     } else {
                         out.append(ch);
-                        lambdaContext.lastOutChar = ch;
                     }
-                } else {
-                    // newPlain esgotado: non inserimos o carácter visible orixinal (bórrase)
-                    // non actualizamos lastOutChar nin consumimos nada.
-                    // de novo, esto podes modificalo para o teu formato
+                    lastChar = ch;
                 }
+            }
+
+            // Flush remaining pending tokens
+            for (Token pt : pendingToInsert) {
+                out.append(pt.text());
+            }
+
+            // Engadir newline se non é a última liña
+            if (lineNum < userLines.length - 1 && lineNum < newlineMarkers.size()) {
+                out.append(newlineMarkers.get(lineNum));
             }
         }
 
-        // tras procesar todos os tokens:
-        // 1) engadir calquera carácter sobrante de newPlain
-        if (p < plen) {
-            out.append(new String(plainChars, p, plen - p));
-        }
-
-        // 2) inserir remaining placeholders se os houbo (ao final)
-        if (!pendingPlaceholders.isEmpty()) {
-            for (String c : pendingPlaceholders) out.append(c);
-            pendingPlaceholders.clear();
+        // Engadir marcador END se existe
+        for (Token t : tokens) {
+            if (t.isEnd()) {
+                out.append(t.text());
+                break;
+            }
         }
 
         return out.toString();
     }
 
+    /**
+     * Procesamento normal para liñas sen marcadores de cor.
+     */
+    private String reapplyFormattingNormal(int lineIndex, String newPlain, List<Token> tokens) {
+        // Separar o newPlain en segmentos por liñas
+        String[] userLines = newPlain.split("\n", -1);
 
+        // Usar arrays para poder modificar dentro do bucle
+        final int[] pos = { 0, 0 }; // pos[0] = currentUserLine, pos[1] = posInLine
+
+        StringBuilder out = new StringBuilder();
+        List<Token> pending = new ArrayList<>();
+
+        // Recoller os marcadores de newline orixinais para usalos na saída
+        List<String> newlineMarkers = new ArrayList<>();
+        for (Token t : tokens) {
+            if (t.isNewline()) {
+                newlineMarkers.add(t.text());
+            }
+        }
+        final int[] nlIdx = { 0 }; // índice de newlineMarkers
+
+        // Estado para o tracking
+        final Character[] lastOutChar = { null };
+
+        // Helper: comprobar se un char é letra
+        java.util.function.Predicate<Character> isLetter = ch -> ch != null && Character.isLetter(ch);
+
+        // Helper: flush pending tokens
+        Runnable flushPending = () -> {
+            for (Token pt : pending) {
+                out.append(pt.text());
+            }
+            pending.clear();
+        };
+
+        // Helper: obter o char actual (ou null se non hai)
+        java.util.function.Supplier<Character> currentChar = () -> {
+            if (pos[0] >= userLines.length)
+                return null;
+            String line = userLines[pos[0]];
+            if (pos[1] >= line.length())
+                return null;
+            return line.charAt(pos[1]);
+        };
+
+        // Helper: consumir e engadir un char
+        Runnable consumeChar = () -> {
+            if (pos[0] >= userLines.length)
+                return;
+            String line = userLines[pos[0]];
+            if (pos[1] >= line.length())
+                return;
+
+            char ch = line.charAt(pos[1]++);
+            if (ch == '"') {
+                out.append("\\\"");
+            } else {
+                out.append(ch);
+            }
+            lastOutChar[0] = ch;
+        };
+
+        // Helper: completar a liña actual
+        Runnable finishCurrentLine = () -> {
+            if (pos[0] >= userLines.length)
+                return;
+            String line = userLines[pos[0]];
+            while (pos[1] < line.length()) {
+                char ch = line.charAt(pos[1]++);
+                if (ch == '"') {
+                    out.append("\\\"");
+                } else {
+                    out.append(ch);
+                }
+                lastOutChar[0] = ch;
+            }
+        };
+
+        // Helper: avanzar á seguinte liña
+        Runnable nextLine = () -> {
+            pos[0]++;
+            pos[1] = 0;
+        };
+
+        // Procesar os tokens
+        for (Token t : tokens) {
+            switch (t.type()) {
+                case VISIBLE -> {
+                    Character ch = currentChar.get();
+                    if (ch != null) {
+                        // Comprobar se podemos flush pending (límite de palabra)
+                        boolean chIsLetter = isLetter.test(ch);
+                        boolean lastIsLetter = isLetter.test(lastOutChar[0]);
+
+                        if (!lastIsLetter || !chIsLetter) {
+                            flushPending.run();
+                        }
+
+                        consumeChar.run();
+                    }
+                }
+
+                case FORMAT -> {
+                    // Marcadores de formato insírense directamente
+                    flushPending.run();
+                    out.append(t.text());
+                }
+
+                case PENDING -> {
+                    // Marcadores pending (^n, ~n) gárdanse para inserir en límites de palabra
+                    pending.add(t);
+                }
+
+                case NEWLINE -> {
+                    // Completar a liña actual do usuario
+                    finishCurrentLine.run();
+
+                    // Flush pending antes do newline
+                    flushPending.run();
+
+                    // Inserir o marcador de newline orixinal
+                    out.append(t.text());
+                    lastOutChar[0] = '\n';
+
+                    // Avanzar á seguinte liña do usuario
+                    nextLine.run();
+                }
+
+                case END -> {
+                    // Engadir todo o texto restante do usuario
+                    while (pos[0] < userLines.length) {
+                        finishCurrentLine.run();
+                        nextLine.run();
+
+                        // Se hai máis liñas, engadir un newline marker
+                        if (pos[0] < userLines.length) {
+                            // Usar o marcador de newline orixinal se queda, ou & por defecto
+                            String nlMarker = nlIdx[0] < newlineMarkers.size()
+                                    ? newlineMarkers.get(nlIdx[0]++)
+                                    : "&";
+                            out.append(nlMarker);
+                            lastOutChar[0] = '\n';
+                        }
+                    }
+
+                    flushPending.run();
+                    out.append(t.text());
+                }
+            }
+        }
+
+        // Se non había marcador de fin, engadir texto restante
+        while (pos[0] < userLines.length) {
+            finishCurrentLine.run();
+            nextLine.run();
+
+            // Se hai máis liñas, engadir newline
+            if (pos[0] < userLines.length) {
+                String nlMarker = nlIdx[0] < newlineMarkers.size()
+                        ? newlineMarkers.get(nlIdx[0]++)
+                        : "&";
+                out.append(nlMarker);
+                lastOutChar[0] = '\n';
+            }
+        }
+
+        // Flush pending final
+        flushPending.run();
+
+        return out.toString();
+    }
 }

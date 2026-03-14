@@ -11,29 +11,29 @@ import com.googlecode.lanterna.terminal.Terminal;
 
 //? manager xeral da TUI usando lanterna. só crea a VentanaMain
 public class TUI {
+    private Screen screen;
     private MultiWindowTextGUI textGUI;
 
-
-    public TUI() {
-        try {
-            initGUI();
-        } catch (Exception e) {
-            System.err.println("Error en lanterna!" + e.getMessage());
-            e.printStackTrace();
-        }
+    public TUI() throws IOException {
+        initGUI();
     }
 
     private void initGUI() throws IOException {
         Terminal terminal = new DefaultTerminalFactory().createTerminal();
-        Screen screen = new TerminalScreen(terminal);
+        this.screen = new TerminalScreen(terminal);
         screen.startScreen();
         this.textGUI = new MultiWindowTextGUI(screen);
     }
 
     public void start() {
-        VentanaMain mainScreen = new VentanaMain(textGUI);
-        mainScreen.show();
+        try {
+            VentanaMain mainScreen = new VentanaMain(textGUI);
+            mainScreen.show();
+        } finally {
+            // restaurar o terminal ao saír para que os erros sexan visibles
+            try {
+                screen.stopScreen();
+            } catch (IOException ignored) {}
+        }
     }
-
-
 }

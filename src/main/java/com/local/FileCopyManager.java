@@ -15,6 +15,7 @@ import java.time.Instant;
 public class FileCopyManager {
 
     private final LocHelper locHelper;
+    private final Path originalPath;
     private final Path copyPath;
     private final Gson gson = new GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create();
 
@@ -24,7 +25,7 @@ public class FileCopyManager {
       */
     public FileCopyManager(LocHelper locHelper, String filename) throws IOException {
         this.locHelper = locHelper;
-        Path originalPath = Path.of(filename);
+        this.originalPath = Path.of(filename);
 
         Path candidate = Path.of(filename + ".copy.json");
         if (Files.exists(candidate)) {
@@ -72,6 +73,26 @@ public class FileCopyManager {
 
         // reescribir o ficheiro copia mantendo formato legible
         writeJsonToCopy(obj);
+    }
+
+    /**
+     * Garda o contido do ficheiro copia no ficheiro orixinal e actualiza a memoria local de LocHelper.
+     * Sobreescribe o ficheiro orixinal co estado actual da copia.
+     */
+    public void saveToOriginal() throws IOException {
+        // copiar o contido da copia ao orixinal
+        Files.copy(copyPath, originalPath, StandardCopyOption.REPLACE_EXISTING);
+
+        // actualizar a memoria local de LocHelper lendo o ficheiro copia
+        String jsonText = Files.readString(copyPath);
+        JsonObject obj = JsonParser.parseString(jsonText).getAsJsonObject();
+
+        for (int i = 0; i < locHelper.getLineCount(); i++) {
+            String key = locHelper.getKey(i);
+            if (obj.has(key)) {
+                locHelper.updateOriginal(i, obj.get(key).getAsString());
+            }
+        }
     }
 
     private void writeJsonToCopy(JsonObject obj) throws IOException {
