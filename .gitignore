@@ -3,9 +3,9 @@
 bin/
 build/
 dist/
-
-*.copy*.json
-
+deltagal/
+.claude/
+*.json.copy*
 *.log
 *.tmp
 *.swp
