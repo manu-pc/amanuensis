@@ -298,6 +298,14 @@ public class LocHelper {
             if (s.endsWith(" ")) s = s.substring(0, s.length() - 1);
         }
 
+        // Detectar ")" ao final da liña como token de formato fixo
+        String trimS = rtrim(s);
+        boolean hasCloseParen = trimS.endsWith(")");
+        if (hasCloseParen) {
+            s = trimS.substring(0, trimS.length() - 1);
+            if (s.endsWith(" ")) s = s.substring(0, s.length() - 1);
+        }
+
         int i = 0;
         int n = s.length();
 
@@ -306,6 +314,12 @@ public class LocHelper {
         if (n >= 2 && s.charAt(0) == '*' && s.charAt(1) == ' ') {
             out.add(new Token(TokenType.FORMAT, "* "));
             i = 2;
+        }
+
+        // Detectar "(" ao inicio da liña (despois de posible "* ") como token de formato fixo
+        if (i < n && s.charAt(i) == '(') {
+            out.add(new Token(TokenType.FORMAT, "("));
+            i++;
         }
 
         while (i < n) {
@@ -428,6 +442,10 @@ public class LocHelper {
                 out.add(new Token(TokenType.VISIBLE, String.valueOf(c)));
                 i++;
             }
+        }
+
+        if (hasCloseParen) {
+            out.add(new Token(TokenType.END, ")"));
         }
 
         if (endMarker != null && !endMarker.isEmpty()) {
@@ -661,11 +679,10 @@ public class LocHelper {
             }
         }
 
-        // Engadir marcador END se existe
+        // Engadir marcadores END se existen
         for (Token t : tokens) {
             if (t.isEnd()) {
                 out.append(t.text());
-                break;
             }
         }
 

@@ -9,6 +9,8 @@ import com.googlecode.lanterna.input.KeyStroke;
 import com.googlecode.lanterna.input.KeyType;
 
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -19,6 +21,7 @@ public class VentanaLocal {
     private final MultiWindowTextGUI textGUI;
     private final LocHelper locHelper;
     private final FileCopyManager fileCopyManager;
+    private final String filename;
 
     private boolean textoBase = false;
     private boolean autoAdvance = true;  // Auto-avanzar á seguinte liña despois de gardar
@@ -44,6 +47,7 @@ public class VentanaLocal {
 
     public VentanaLocal(String filename, MultiWindowTextGUI textGUI) throws IOException {
         this.textGUI = textGUI;
+        this.filename = filename;
         this.locHelper = new LocHelper(filename);
         this.fileCopyManager = new FileCopyManager(locHelper, filename);
     }
@@ -259,10 +263,11 @@ public class VentanaLocal {
         root.addComponent(reappliedLabel);
 
         // ---------- bottom buttons ----------
-        Panel bottom = new Panel(new GridLayout(6));
+        Panel bottom = new Panel(new GridLayout(7));
         Button save = new Button("gardar", this::doSaveFromEditBox);
         Button saveChanges = new Button("gardar cambios", this::doSaveChanges);
         Button refresh = new Button("refrescar", this::updateView);
+        Button dumpTxt = new Button("exportar .txt", this::doDumpToTxt);
 
         // checkbox para auto-avance
         CheckBox autoAdvanceCheck = new CheckBox("auto-avanzar") {
@@ -281,6 +286,7 @@ public class VentanaLocal {
         bottom.addComponent(save);
         bottom.addComponent(saveChanges);
         bottom.addComponent(refresh);
+        bottom.addComponent(dumpTxt);
         bottom.addComponent(autoAdvanceCheck);
         bottom.addComponent(new EmptySpace(new TerminalSize(1,1)));
         bottom.addComponent(close);
@@ -292,6 +298,28 @@ public class VentanaLocal {
         updateView();
 
         textGUI.addWindowAndWait(window);
+    }
+
+    // exporta todas as liñas sen marcadores a un ficheiro .txt
+    private void doDumpToTxt() {
+        String base = filename.endsWith(".json")
+                ? filename.substring(0, filename.length() - 5)
+                : filename;
+        Path outPath = Path.of(base + ".txt");
+
+        List<String> lines = new ArrayList<>();
+        for (int i = 0; i < locHelper.getLineCount(); i++) {
+            lines.add(locHelper.stripFormatting(i));
+        }
+
+        try {
+            Files.writeString(outPath, String.join("\n", lines));
+            reappliedLabel.setText("exportado a: " + outPath);
+            reappliedLabel.setForegroundColor(TextColor.ANSI.GREEN);
+        } catch (IOException e) {
+            reappliedLabel.setText("erro ao exportar: " + e.getMessage());
+            reappliedLabel.setForegroundColor(TextColor.ANSI.RED);
+        }
     }
 
     // acción central de gardado usada por enter e por botón gardar
