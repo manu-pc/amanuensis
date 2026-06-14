@@ -1,6 +1,6 @@
 package com;
 
-import com.tui.TUI;
+import com.gui.GuiApp;
 
 import java.io.PrintWriter;
 import java.io.StringWriter;
@@ -13,15 +13,16 @@ public class Main {
 
     public static void main(String[] args) {
         try {
-            TUI tui = new TUI();
-            tui.start();
-        } catch (Exception e) {
+            // GuiApp é a única clase que estende Application; lánzase desde aquí
+            // (un main que NON estende Application) para que o fat-jar arranque ben.
+            GuiApp.launchApp(args);
+        } catch (Throwable e) {
             logCrash(e);
             System.exit(1);
         }
     }
 
-    static void logCrash(Exception e) {
+    static void logCrash(Throwable e) {
         try {
             StringWriter sw = new StringWriter();
             sw.write("[" + LocalDateTime.now() + "] CRASH:\n");
