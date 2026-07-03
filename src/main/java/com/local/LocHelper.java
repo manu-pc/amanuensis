@@ -54,8 +54,14 @@ public class LocHelper {
         JsonObject obj = JsonParser.parseString(jsonText).getAsJsonObject();
 
         for (Map.Entry<String, JsonElement> e : obj.entrySet()) {
+            JsonElement val = e.getValue();
+            // Só liñas de texto: ignorar valores que non sexan string (arrays/obxectos
+            // de ficheiros de metadatos como chapter_settings.json).
+            if (!val.isJsonPrimitive() || !val.getAsJsonPrimitive().isString()) {
+                continue;
+            }
             keys.add(e.getKey());
-            originals.add(e.getValue().getAsString());
+            originals.add(val.getAsString());
         }
     }
 
@@ -298,6 +304,14 @@ public class LocHelper {
             if (s.endsWith(" ")) s = s.substring(0, s.length() - 1);
         }
 
+        // Detectar ")" ao final da liña como token de formato fixo
+        String trimS = rtrim(s);
+        boolean hasCloseParen = trimS.endsWith(")");
+        if (hasCloseParen) {
+            s = trimS.substring(0, trimS.length() - 1);
+            if (s.endsWith(" ")) s = s.substring(0, s.length() - 1);
+        }
+
         int i = 0;
         int n = s.length();
 
@@ -308,6 +322,16 @@ public class LocHelper {
             i = 2;
         }
 
+        // Detectar "(" ao inicio da liña (despois de posible "* ") como token de formato fixo
+        boolean openParen = false;
+        boolean visibleSeen = false;
+        boolean atLineStart = false;
+        if (i < n && s.charAt(i) == '(') {
+            out.add(new Token(TokenType.FORMAT, "("));
+            i++;
+            openParen = true;
+        }
+
         while (i < n) {
             char c = s.charAt(i);
 
@@ -315,6 +339,7 @@ public class LocHelper {
             if (c == '\n') {
                 out.add(new Token(TokenType.NEWLINE, "\n", "\n"));
                 i++;
+                atLineStart = true; visibleSeen = false;
                 continue;
             }
 
@@ -322,6 +347,7 @@ public class LocHelper {
             if (c == '#') {
                 out.add(new Token(TokenType.NEWLINE, "#", "\n"));
                 i++;
+                atLineStart = true; visibleSeen = false;
                 continue;
             }
 
@@ -329,6 +355,7 @@ public class LocHelper {
             if (c == '&') {
                 out.add(new Token(TokenType.NEWLINE, "&", "\n"));
                 i++;
+                atLineStart = true; visibleSeen = false;
                 continue;
             }
 
@@ -423,11 +450,34 @@ public class LocHelper {
                 out.add(new Token(TokenType.PENDING, tok));
                 i = j;
             }
+            // "* " ao inicio de liña (despois de newline ou inicio de string)
+            else if (c == '*' && atLineStart && i + 1 < n && s.charAt(i + 1) == ' ') {
+                out.add(new Token(TokenType.FORMAT, "* "));
+                i += 2;
+            }
+            // Apertura de paréntese antes de calquera texto visible (ex: \E5* (text)/)
+            else if (c == '(' && !visibleSeen && !openParen) {
+                out.add(new Token(TokenType.FORMAT, "("));
+                openParen = true;
+                i++;
+            }
+            // Peche de paréntese de apertura inicial
+            else if (c == ')' && openParen) {
+                out.add(new Token(TokenType.FORMAT, ")"));
+                openParen = false;
+                i++;
+            }
             // Calquera outro carácter = visible
             else {
                 out.add(new Token(TokenType.VISIBLE, String.valueOf(c)));
+                visibleSeen = true;
+                atLineStart = false;
                 i++;
             }
+        }
+
+        if (hasCloseParen) {
+            out.add(new Token(TokenType.END, ")"));
         }
 
         if (endMarker != null && !endMarker.isEmpty()) {
@@ -540,6 +590,16 @@ public class LocHelper {
         if (newPlain == null)
             newPlain = "";
 
+        // Se o orixinal ten ^1, extráense dos tokens e reinsérese antes de
+        // cada signo de puntuación na tradución en lugar de en límites de palabra.
+        boolean hasCaretOne = tokens.stream()
+                .anyMatch(t -> t.type() == TokenType.PENDING && "^1".equals(t.text()));
+        if (hasCaretOne) {
+            tokens = tokens.stream()
+                    .filter(t -> !(t.type() == TokenType.PENDING && "^1".equals(t.text())))
+                    .collect(java.util.stream.Collectors.toList());
+        }
+
         // Comprobar se esta liña ten marcadores relocatables
         List<String> colorMarkers = extractColorMarkers(lineIndex);
         List<String> tildeMarkers = extractTildeMarkers(lineIndex);
@@ -548,14 +608,49 @@ public class LocHelper {
         boolean hasRelocatable = !colorMarkers.isEmpty() || !tildeMarkers.isEmpty()
                 || !backslashOMarkers.isEmpty() || !backslashIMarkers.isEmpty();
 
-        // Se hai marcadores relocatables, procesamento especial
+        String result;
         if (hasRelocatable) {
-            return reapplyFormattingWithRelocatable(lineIndex, newPlain, tokens,
+            result = reapplyFormattingWithRelocatable(lineIndex, newPlain, tokens,
                     colorMarkers, tildeMarkers, backslashOMarkers, backslashIMarkers);
+        } else {
+            result = reapplyFormattingNormal(lineIndex, newPlain, tokens);
         }
 
-        // Se non hai marcadores relocatables, procesamento normal
-        return reapplyFormattingNormal(lineIndex, newPlain, tokens);
+        if (hasCaretOne) {
+            result = insertCaretOneBeforePunctuation(result);
+        }
+
+        return result;
+    }
+
+    private static String insertCaretOneBeforePunctuation(String s) {
+        StringBuilder sb = new StringBuilder(s.length() + 16);
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            boolean insertCaret = false;
+            if (c == ',' || c == ';' || c == ':' || c == '!' || c == '?') {
+                insertCaret = true;
+            } else if (c == '.') {
+                // only before the last dot in a run (... → ..^1.)
+                boolean isLastInRun = i + 1 >= s.length() || s.charAt(i + 1) != '.';
+                if (isLastInRun) {
+                    // skip ^1 before the terminal dot of the sentence:
+                    // if everything after this dot is end-marker chars (/ % )) or nothing
+                    boolean isTerminal = true;
+                    for (int j = i + 1; j < s.length(); j++) {
+                        char nc = s.charAt(j);
+                        if (nc != '/' && nc != '%' && nc != ')') {
+                            isTerminal = false;
+                            break;
+                        }
+                    }
+                    insertCaret = !isTerminal;
+                }
+            }
+            if (insertCaret) sb.append("^1");
+            sb.append(c);
+        }
+        return sb.toString();
     }
 
     /**
@@ -661,11 +756,10 @@ public class LocHelper {
             }
         }
 
-        // Engadir marcador END se existe
+        // Engadir marcadores END se existen
         for (Token t : tokens) {
             if (t.isEnd()) {
                 out.append(t.text());
-                break;
             }
         }
 

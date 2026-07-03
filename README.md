@@ -1,84 +1,74 @@
 # amanuensis
-### Deltarune / UT friendly Localisation Assistant
 
-<details>
-<summary>readme, if you haven't played deltarune</summary>
+Editor de localización para traducir os ficheiros de texto de Deltarune/Undertale. Deseñado para o proxecto DELTARUNE en galego.
 
-## introduction 
-**[amanuensis](https://dictionary.cambridge.org/dictionary/english/amanuensis)** is a simple TUI tool intended to make translating and localising around annoying format markers easier. 
+![screenshot](img/screenshot.png)
 
-let's say we want to work on localising Deltarune. with the ever-useful UT modding tool, we can extract the dialogue into a .json file with lines like these:
+## Requisitos
 
-  `"obj_ch2_scene27_slash_Step_0_gml_183_0": "\\Ed* ..^1. but^1, if that wasn't the case.../",`
+- Java 21+
+- (Opcional) `hunspell` co dicionario galego para corrección ortográfica en liña
 
-we *could* try selecting and replacing around all the markers, but for a game with 10k+ lines of dialogue per chapter, this becomes annoying and time-consuming.
+```bash
+# Debian/Ubuntu
+sudo apt install hunspell hunspell-gl
+```
 
-instead, let's open the .json file with amanuensis and navigate to this line:
-![captura](img/screenshot.png)
+## Compilar e executar
 
-wow, actually readable!
+```bash
+# Compilar e executar (Linux)
+./run.sh
 
-and instead of worrying about keeping all the markers to not break the syntax, we just translate the actual dialogue, and the program re-applies all the newline and other format markers correctly, without separating words or breaking out of the dialogue box. how kind!
+# Só executar en modo desenvolvemento (sen empaquetar)
+./mvnw javafx:run
 
-## how to use
+# Compilar jar para Windows
+./mvnw -Pwindows clean package
+# saída: target/amanuensis-windows-1.0-SNAPSHOT.jar
+```
 
-- requires a .json file with a format similar to the included one. the filename will be introduced on the first window
-- inside the main localisation window:'
-  - top row buttons allow switching between json lines
-  - purple label shows read line
-  - cyan label shows dialogue without format markers
-  - textbox allows inputting of modified text. inside textbox, [Enter] to save and [up/down pag] to switch lines
-- will automatically create a .copy.json file with the modified lines
+O jar é autocontido (inclúe JavaFX): `java -jar target/amanuensis-1.0-SNAPSHOT.jar`
 
-## how to run
+O directorio `lang/` debe estar no mesmo lugar que o jar ao executar.
 
-**UNIX/MAC**: clone project, run ``run.sh``
-**WINDOWS**: clone project, run ``run.bat``
+## Uso
 
+Ao abrir, selecciona un `.json` de `lang/` (dobre clic) ou examina un ficheiro.
 
+### Controis do editor
 
+| Tecla | Acción |
+|---|---|
+| `AvPáx` / `RePáx` | Seguinte / anterior liña |
+| `Ctrl+AvPáx` / `Ctrl+RePáx` | Saltar 10 liñas |
+| `Enter` | Gardar e avanzar |
+| `Shift+Tab` | Inserir salto de liña (`&`) |
+| `F5` | Revisión ortográfica guiada (palabra a palabra) |
+| `F3` / `Shift+F3` | Seguinte / anterior resultado de busca |
 
-</details>
+### Gardar
 
-<details>
-<summary>readme, if you have played deltarune</summary>
+- **gardar** — aplica a tradución á copia de traballo (`.copy.json`)
+- **gardar cambios** — escribe a copia de traballo no ficheiro orixinal
 
+O editor traballa sempre sobre unha copia para protexer o orixinal.
 
-## HEY EVERY      !!  IT' S ME!!1!
-![spamton](img/spamton.png)
+## Marcadores do xogo
 
+Os textos de Deltarune conteñen códigos de formato. O editor móstraos na páxina "liña literal" e ocúltalos na liña editable, onde se usan **marcadores de posición** que o usuario pode recolocar:
 
-EVERYBODY'S [[Number #1 rated]] [[Vibe Coder]]    MANU [PC Componentes]
+| Placeholder | Marcador orixinal | Efecto |
+|---|---|---|
+| `*texto*` | `\cX` / `\CX` | Cor de texto (os asteriscos delimitan o texto coloreado) |
+| `~` | `~n` | Efecto de texto |
+| `@` | `\On` | Obxecto |
+| `$` | `\In` | Icona |
 
-HERE WITH [Only the latest trends]] IN [[Absolute Dogshit]]!!!!
+Os marcadores fixos (`\E`, `\M`, `* `, `( )`, pausas `^n`, saltos `&`) reinséirense automaticamente na posición correcta ao gardar.
 
-ARE YOU TIRED OF [Disgusting] FORMAT MARKERS LIKE [\n] [/%] [^1] [And many more!] RUINING YOUR [Pleasant Evening]!?
+**Convención para `^1`:** se o orixinal ten pausas `^1`, o editor elimínaas do texto limpo e reinséreas automaticamente antes de cada signo de puntuación (`,^1` `^1.` `..^1.`) na tradución ao gardar.
 
-TRYING TO MAKE AN [[HonestMod]] TO TRANSLATE [The Game] DESPITE NOT HAVING AN OFFICIAL TRANSLATION TOOL??
+## Dicionario persoal
 
-WELL,       DON'T [!$%X] YET, KID!! FOR THE [Low, low price of]  YOU TOO CAN
-
-YOU TOO CAN
-
-
-![captura](img/screenshot.png)
-
-
-LOOK AT THAT [[Lanterna]]!!! YOU DON'T SEE TERMINAL USER INTERFACES LIKE THAT [On TV]
-
-## HELP
-
-- LOAD YOUR [.json shaped] FILE USING THE MAIN [[Windows]]
-- THE PROGRAM WILL HANDLE ALL FORMAT MARKERS FOR YOU [[No money back guaranteed!!]] SO YOU CAN [See] AND [Touch] AND [Feel] THE CONTENT OF THE DIALOGUE!!
-- [With 3 simple payments] YOU CAN WRITE YOUR TRANSLATION!! NO NEED TO WORRY OR [Die] ABOUT INSERTING NEWLINES, EOF, OR [Hyperlink Blocked]
-- [Press the Enter key to] QUICKLY SAVE THE NEW TRANSLATED TEXT, WITH ALL THE [Disgusting] FORMAT MARKERS CORRECTLY RE-APPLIED!! IT'S SO EASY, A [Game Show Host] COULD DO IT!
-- YOUR OUTPUT FILE WILL BE GENERATED WITH YOUR BEAUTIFUL LOCALISATION!!1!
-
-
-## RUN
-
-ALL THE [Scripts] ARE THERE, ON THE [github.com] REPOSITORY, KID! WHAT MORE DO YOU NEED!?
-
-
-
-</details>
+As palabras engadidas con «Engadir ao dicionario» gárdanse en `lang/amanuensis-personal.dic` e persisten entre sesións.
