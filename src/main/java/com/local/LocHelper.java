@@ -1,15 +1,15 @@
 package com.local;
 
-import com.google.gson.JsonElement;
-import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
-
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 
 /**
  * Clase encargada do manexo de simbolos marcadores de texto para
@@ -480,6 +480,10 @@ public class LocHelper {
             out.add(new Token(TokenType.END, ")"));
         }
 
+        if (hasCloseParen) {
+            out.add(new Token(TokenType.END, ")"));
+        }
+
         if (endMarker != null && !endMarker.isEmpty()) {
             out.add(new Token(TokenType.END, endMarker));
         }
@@ -756,6 +760,7 @@ public class LocHelper {
             }
         }
 
+        // Engadir marcadores END se existen
         // Engadir marcadores END se existen
         for (Token t : tokens) {
             if (t.isEnd()) {

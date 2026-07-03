@@ -22,3 +22,8 @@ lang/
 /i
 # fontes do dicionario hunspell galego (non se usa: app cae no dicionario do sistema)
 hunspellgal/
+
+# ficheiro de notas solto
+/i
+# fontes do dicionario hunspell galego (non se usa: app cae no dicionario do sistema)
+hunspellgal/
