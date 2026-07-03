@@ -1,6 +1,6 @@
 # amanuensis
 
-Editor de localización para traducir os ficheiros de texto de Deltarune/Undertale. Deseñado para o proxecto DELTARUNE en galego.
+Editor de localización para traducir os ficheiros de texto de Deltarune/Undertale. Deseñado para o proxecto [DELTARUNE en galego](github.com/manu-pc/deltarune-en-galego).
 
 ![screenshot](img/screenshot.png)
 
