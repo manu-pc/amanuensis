@@ -1,5 +1,7 @@
 package com.gui;
 
+import com.git.GitHubSession;
+import com.git.GitRepoService;
 import com.local.FileCopyManager;
 import com.local.HunspellChecker;
 import com.local.LocHelper;
@@ -47,6 +49,8 @@ import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.SortedSet;
+import java.util.TreeSet;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -84,6 +88,19 @@ public class LocalView {
         t.setDaemon(true);
         return t;
     });
+
+    // executor dun só fío para commit+push en segundo plano
+    private final ExecutorService gitExecutor = Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "git-push");
+        t.setDaemon(true);
+        return t;
+    });
+
+    private final GitRepoService gitRepoService = new GitRepoService(Path.of("lang"));
+    // ruta relativa dentro de lang/, ou null se o ficheiro aberto non pertence ao repositorio
+    private final Path relativeInRepo;
+    // liñas (índice 1-based, coma na UI) gardadas nesta sesión, pendentes de subir
+    private final SortedSet<Integer> editedLines = new TreeSet<>();
 
     private boolean textoBase = false;
     private boolean autoAdvance = true;
@@ -130,6 +147,21 @@ public class LocalView {
         this.locHelper = new LocHelper(filename);
         this.fileCopyManager = new FileCopyManager(locHelper, filename);
         this.spellChecker = new HunspellChecker();
+        this.relativeInRepo = computeRelativeInRepo(filename);
+    }
+
+    // devolve a ruta relativa dentro de lang/ se filename está baixo esa carpeta, ou null
+    private static Path computeRelativeInRepo(String filename) {
+        try {
+            Path abs = Path.of(filename).toAbsolutePath().normalize();
+            Path repoAbs = Path.of("lang").toAbsolutePath().normalize();
+            if (abs.startsWith(repoAbs) && !abs.equals(repoAbs)) {
+                return repoAbs.relativize(abs);
+            }
+        } catch (Exception ignored) {
+            // rutas raras (ex: noutra unidade en Windows): trátase coma "fóra do repo"
+        }
+        return null;
     }
 
     public void show() {
@@ -190,7 +222,10 @@ public class LocalView {
         stage.show();
         Platform.runLater(editArea::requestFocus);
 
-        stage.setOnHidden(e -> spellExecutor.shutdownNow());
+        stage.setOnHidden(e -> {
+            spellExecutor.shutdownNow();
+            gitExecutor.shutdownNow();
+        });
     }
 
     // ---------------------------------------------------------------
@@ -275,6 +310,8 @@ public class LocalView {
         save.setOnAction(e -> doSaveFromEditBox());
         Button saveChanges = new Button("gardar cambios");
         saveChanges.setOnAction(e -> doSaveChanges());
+        Button pushBtn = new Button("gardar e subir a GitHub");
+        pushBtn.setOnAction(e -> doSaveAndPush());
         Button refresh = new Button("refrescar");
         refresh.setOnAction(e -> updateView());
         Button dumpTxt = new Button("exportar .txt");
@@ -296,7 +333,7 @@ public class LocalView {
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
 
-        HBox bar = new HBox(8, save, saveChanges, refresh, dumpTxt,
+        HBox bar = new HBox(8, save, saveChanges, pushBtn, refresh, dumpTxt,
                 autoAdvanceCheck, spellOnEnterCheck, spacer, close);
         bar.setAlignment(Pos.CENTER_LEFT);
         return bar;
@@ -735,6 +772,7 @@ public class LocalView {
 
         try {
             fileCopyManager.updateLine(currentIndex, formatted);
+            editedLines.add(currentIndex + 1);
             String shortFmt = formatted.length() > 60 ? formatted.substring(0, 57) + "..." : formatted;
             String savedMsg = "gardado [" + (currentIndex + 1) + "]: " + shortFmt;
             status(savedMsg, Color.SEAGREEN);
@@ -757,6 +795,100 @@ public class LocalView {
         } catch (IOException e) {
             status("erro ao gardar cambios: " + e.getMessage(), Color.CRIMSON);
         }
+    }
+
+    // ---------------------------------------------------------------
+    // gardar e subir a GitHub
+    // ---------------------------------------------------------------
+
+    private void doSaveAndPush() {
+        if (relativeInRepo == null) {
+            status("este ficheiro non está dentro de lang/; non se pode subir a GitHub", Color.DARKORANGE);
+            return;
+        }
+        if (!gitRepoService.isCloned()) {
+            status("o proxecto de tradución non está descargado (pantalla inicial)", Color.DARKORANGE);
+            return;
+        }
+        GitHubSession session = GitHubSession.getInstance();
+        if (!session.isLoggedIn()) {
+            status("inicia sesión en GitHub primeiro (pantalla inicial)", Color.DARKORANGE);
+            return;
+        }
+
+        try {
+            fileCopyManager.saveToOriginal();
+        } catch (IOException ex) {
+            status("erro ao gardar cambios: " + ex.getMessage(), Color.CRIMSON);
+            return;
+        }
+        updateView();
+
+        if (editedLines.isEmpty()) {
+            status("non hai liñas editadas nesta sesión para subir", Color.DARKORANGE);
+            return;
+        }
+
+        String subject = "Tradución liñas (" + GitRepoService.compressRanges(new ArrayList<>(editedLines)) + ")";
+        showCommitMessageDialog(subject, session);
+    }
+
+    private void showCommitMessageDialog(String proposedSubject, GitHubSession session) {
+        Stage dlg = new Stage();
+        dlg.initOwner(stage);
+        dlg.initModality(Modality.APPLICATION_MODAL);
+        dlg.setTitle("Subir a GitHub");
+
+        Label label = new Label("Mensaxe da actualización (podes editala):");
+        TextField subjectField = new TextField(proposedSubject);
+        subjectField.setPrefColumnCount(40);
+
+        Button confirmBtn = new Button("subir");
+        confirmBtn.setDefaultButton(true);
+        Button cancelBtn = new Button("cancelar");
+        cancelBtn.setCancelButton(true);
+
+        confirmBtn.setOnAction(e -> {
+            dlg.close();
+            String subject = subjectField.getText().trim();
+            runCommitAndPush(subject.isEmpty() ? proposedSubject : subject, session);
+        });
+        cancelBtn.setOnAction(e -> dlg.close());
+
+        HBox buttons = new HBox(8, confirmBtn, cancelBtn);
+        buttons.setAlignment(Pos.CENTER_RIGHT);
+        VBox box = new VBox(10, label, subjectField, buttons);
+        box.setPadding(new Insets(14));
+
+        dlg.setScene(new Scene(box, 460, 150));
+        dlg.show();
+    }
+
+    private void runCommitAndPush(String subject, GitHubSession session) {
+        status("subindo a GitHub...", Color.TEAL);
+
+        com.git.GitHubAuth.GitHubUser user = session.getUser();
+        String authorName = user != null ? user.name() : "amanuensis";
+        String authorEmail = user != null ? user.noreplyEmail() : "amanuensis@users.noreply.github.com";
+        Path targetFile = relativeInRepo;
+
+        gitExecutor.submit(() -> {
+            GitRepoService.PushOutcome outcome = gitRepoService.commitAndPush(
+                    targetFile, subject, authorName, authorEmail, session.getToken());
+            Platform.runLater(() -> {
+                if (outcome instanceof GitRepoService.PushOutcome.Success) {
+                    editedLines.clear();
+                    status("subido a GitHub correctamente", Color.SEAGREEN);
+                } else if (outcome instanceof GitRepoService.PushOutcome.Conflict c) {
+                    editedLines.clear();
+                    status("ocorreu un problema, outro usuario editou as liñas (" + c.lineRanges()
+                            + ") ao mesmo tempo que ti. os teus cambios foron gardados nunha rama separada e non se perderon.",
+                            Color.CRIMSON);
+                } else if (outcome instanceof GitRepoService.PushOutcome.Failure f) {
+                    status("erro ao subir: " + f.reason(), Color.CRIMSON);
+                }
+            });
+        });
     }
 
     private void nextLine() {
