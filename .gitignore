@@ -18,6 +18,7 @@ deltagal/
 /*.iml
 .vscode/
 lang/
+deltarune-en-galego-DEV/
 # ficheiro de notas solto
 /i
 # fontes do dicionario hunspell galego (non se usa: app cae no dicionario do sistema)
