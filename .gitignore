@@ -5,6 +5,7 @@ build/
 dist/
 deltagal/
 .claude/
+CLAUDE.md
 *.json.copy*
 *.log
 *.tmp
