@@ -1,76 +1,47 @@
-# amanuensis
+<p align="center">
+  <img src="img/logo.png" alt="amanuensis" width="320">
+</p>
 
-Editor de localización para traducir os ficheiros de texto de Deltarune/Undertale. Deseñado para o proxecto [DELTARUNE en galego](https://www.github.com/manu-pc/deltarune-en-galego).
+<p align="center">
+  <b>Editor de localización para traducir strings de Deltarune / Undertale.</b>
+</p>
 
-![screenshot](img/screenshot.png)
+---
 
-## Requisitos
+**amanuensis** é unha aplicación de escritorio (JavaFX) feita a medida para o
+proxecto [DELTARUNE en galego](https://www.github.com/manu-pc/deltarune-en-galego).
 
-- Java 21+
-- (Opcional) `hunspell` co dicionario galego para corrección ortográfica en liña
+Os ficheiros de texto do xogo veñen cheos de códigos de formato (cores, pausas,
+saltos de liña, iconas...). Editalos á man é lento e fácil de romper. amanuensis
+**oculta eses códigos**, deixa traducir texto limpo, e reinséreos na posición
+correcta ao gardar.
 
-```bash
-# Debian/Ubuntu
-sudo apt install hunspell hunspell-gl
-```
+Ademais, **sincroniza co repositorio en GitHub por ti**: baixar, subir e resolver
+choques entre tradutores faise dende o programa de forma intuitiva sen ter que entender de git.
 
-## Compilar e executar
+O propósito desta aplicación é traer a máis xente ao proxecto de tradución, facéndolles o traballo máis doado e aforrándolles ter que traballar a baixo nivel. 
+
+
+## Documentación
+
+1. **[O editor e os marcadores do xogo](docs/1-o-editor.md)** — como se traduce e que fai cos códigos de formato.
+2. **[Sincronización con GitHub](docs/2-github.md)** — colaborar entre tradutores sen tocar `git`.
+
+## Compilación
 
 ```bash
 # Compilar e executar (Linux)
 ./run.sh
 
-# Só executar en modo desenvolvemento (sen empaquetar)
+# Modo desenvolvemento (sen empaquetar)
 ./mvnw javafx:run
 
-# Compilar jar para Windows
+# Jar para Windows
 ./mvnw -Pwindows clean package
-# saída: target/amanuensis-windows-1.0-SNAPSHOT.jar
 ```
 
-O jar é autocontido (inclúe JavaFX): `java -jar target/amanuensis-1.0-SNAPSHOT.jar`
+O jar é autocontido (inclúe JavaFX). O directorio `lang/` debe estar no mesmo
+lugar que o jar ao executar.
 
-O directorio `lang/` debe estar no mesmo lugar que o jar ao executar.
-
-## Uso
-
-Ao abrir, selecciona un `.json` de `lang/` (dobre clic) ou examina un ficheiro.
-
-### Controis do editor
-
-| Tecla | Acción |
-|---|---|
-| `AvPáx` / `RePáx` | Seguinte / anterior liña |
-| `Ctrl+AvPáx` / `Ctrl+RePáx` | Saltar 10 liñas |
-| `Enter` | Gardar e avanzar |
-| `Shift+Tab` | Inserir salto de liña (`&`) |
-| `F5` | Revisión ortográfica guiada (palabra a palabra) |
-| `F3` / `Shift+F3` | Seguinte / anterior resultado de busca |
-
-### Gardar
-
-- **gardar** — aplica a tradución á copia de traballo (`.copy.json`)
-- **gardar e subir a GitHub** — vólca a copia de traballo no ficheiro orixinal e súbeo a GitHub
-
-O editor traballa sempre sobre unha copia para protexer o orixinal. A copia é o
-almacén durable: cada liña gárdase nela ao instante, así que non se perde nada
-aínda que peches sen subir.
-
-## Marcadores do xogo
-
-Os textos de Deltarune conteñen códigos de formato. O editor móstraos na páxina "liña literal" e ocúltalos na liña editable, onde se usan **marcadores de posición** que o usuario pode recolocar:
-
-| Placeholder | Marcador orixinal | Efecto |
-|---|---|---|
-| `*texto*` | `\cX` / `\CX` | Cor de texto (os asteriscos delimitan o texto coloreado) |
-| `~` | `~n` | Efecto de texto |
-| `@` | `\On` | Obxecto |
-| `$` | `\In` | Icona |
-
-Os marcadores fixos (`\E`, `\M`, `* `, `( )`, pausas `^n`, saltos `&`) reinséirense automaticamente na posición correcta ao gardar.
-
-**Convención para `^1`:** se o orixinal ten pausas `^1`, o editor elimínaas do texto limpo e reinséreas automaticamente antes de cada signo de puntuación (`,^1` `^1.` `..^1.`) na tradución ao gardar.
-
-## Dicionario persoal
-
-As palabras engadidas con «Engadir ao dicionario» gárdanse en `lang/amanuensis-personal.dic` e persisten entre sesións.
+**Requisitos:** Java 21+. Opcional: `hunspell` + dicionario galego para a
+corrección ortográfica (`sudo apt install hunspell hunspell-gl`).
