@@ -3,8 +3,15 @@
 set -euo pipefail
 
 AMANUENSIS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TARGET_REPO="/home/mpereiroc/Documentos/deltarune-en-galego-DEV"
+TARGET_REPO="/home/mpereiroc/Documents/deltarune-en-galego-DEV"
 TARGET_BRANCH="main"
+
+# Sync the target repo to the branch we intend to push BEFORE copying jars in,
+# so the commit lands on the right branch and the checkout can't be blocked by
+# freshly-copied jar changes in the working tree.
+cd "$TARGET_REPO"
+git checkout "$TARGET_BRANCH"
+git pull --ff-only origin "$TARGET_BRANCH"
 
 cd "$AMANUENSIS_DIR"
 

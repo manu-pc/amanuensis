@@ -50,9 +50,11 @@ Ao abrir, selecciona un `.json` de `lang/` (dobre clic) ou examina un ficheiro.
 ### Gardar
 
 - **gardar** — aplica a tradución á copia de traballo (`.copy.json`)
-- **gardar cambios** — escribe a copia de traballo no ficheiro orixinal
+- **gardar e subir a GitHub** — vólca a copia de traballo no ficheiro orixinal e súbeo a GitHub
 
-O editor traballa sempre sobre unha copia para protexer o orixinal.
+O editor traballa sempre sobre unha copia para protexer o orixinal. A copia é o
+almacén durable: cada liña gárdase nela ao instante, así que non se perde nada
+aínda que peches sen subir.
 
 ## Marcadores do xogo
 

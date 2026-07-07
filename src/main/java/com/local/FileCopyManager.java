@@ -95,6 +95,11 @@ public class FileCopyManager {
         }
     }
 
+    /** Elimina o ficheiro copia. Usar só cando non hai edicións pendentes que perder. */
+    public void deleteCopy() throws IOException {
+        Files.deleteIfExists(copyPath);
+    }
+
     private void writeJsonToCopy(JsonObject obj) throws IOException {
         String out = gson.toJson(obj);
         Files.writeString(copyPath, out);

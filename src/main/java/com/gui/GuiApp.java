@@ -1,12 +1,15 @@
 package com.gui;
 
+import com.AppDir;
 import com.git.GitHubSession;
 import com.git.GitRepoService;
 
 import javafx.application.Application;
+import javafx.application.Platform;
+import javafx.scene.image.Image;
 import javafx.stage.Stage;
 
-import java.nio.file.Path;
+import java.io.InputStream;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -22,10 +25,14 @@ import java.util.concurrent.TimeUnit;
 public class GuiApp extends Application {
 
     private ScheduledExecutorService gitScheduler;
+    private Stage stage;
+    private volatile boolean syncPromptPending;
 
     @Override
     public void start(Stage stage) {
+        this.stage = stage;
         stage.setTitle("amanuensis");
+        loadAppIcons(stage);
 
         gitScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "git-auto-pull");
@@ -37,16 +44,42 @@ public class GuiApp extends Application {
         new MainView(stage).show();
     }
 
-    // pull periódico en segundo plano: nunca toca un ficheiro trackeado con
-    // cambios sen subir (ver GitRepoService.pullIfSafe).
+    // pull periódico en segundo plano. Se hai cambios locais sen subir E o remoto
+    // avanzou, pregunta antes de subir; se non, fai un pull seguro (nunca toca un
+    // ficheiro trackeado con cambios sen subir, ver GitRepoService.pullIfSafe).
     private void autoPullIfPossible() {
         GitHubSession session = GitHubSession.getInstance();
         if (!session.isLoggedIn()) return;
 
-        GitRepoService repo = new GitRepoService(Path.of("lang"));
+        // O repositorio git é a carpeta base (a do jar), que contén .git e lang/.
+        GitRepoService repo = new GitRepoService(AppDir.base());
         if (!repo.isCloned()) return;
 
+        if (GitSync.divergesFromRemote(repo, session.getToken())) {
+            if (syncPromptPending) return; // non amontoar diálogos entre ticks
+            syncPromptPending = true;
+            Platform.runLater(() -> {
+                try {
+                    GitSync.confirmAndUpload(stage, repo, session, GitSync.MSG_DIVERGED, null);
+                } finally {
+                    syncPromptPending = false;
+                }
+            });
+            return;
+        }
         repo.pullIfSafe(session.getToken());
+    }
+
+    // Icona da app: varios tamaños empaquetados no jar; JavaFX escolle o mellor
+    // para a barra de tarefas/xanela. Todas as xanelas comparten este Stage.
+    private void loadAppIcons(Stage stage) {
+        for (int size : new int[]{16, 32, 64, 128, 256}) {
+            try (InputStream in = getClass().getResourceAsStream("/icons/logo-" + size + ".png")) {
+                if (in != null) stage.getIcons().add(new Image(in));
+            } catch (Exception ignored) {
+                // sen icona nese tamaño: JavaFX usa os que si carguen
+            }
+        }
     }
 
     @Override

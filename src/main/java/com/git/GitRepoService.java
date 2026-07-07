@@ -11,23 +11,31 @@ import org.eclipse.jgit.api.ResetCommand;
 import org.eclipse.jgit.api.Status;
 import org.eclipse.jgit.api.TransportCommand;
 import org.eclipse.jgit.api.errors.GitAPIException;
+import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.ObjectLoader;
 import org.eclipse.jgit.lib.PersonIdent;
+import org.eclipse.jgit.lib.Ref;
+import org.eclipse.jgit.lib.RefUpdate;
+import org.eclipse.jgit.lib.ProgressMonitor;
 import org.eclipse.jgit.lib.Repository;
+import org.eclipse.jgit.lib.StoredConfig;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.transport.PushResult;
 import org.eclipse.jgit.transport.RefSpec;
 import org.eclipse.jgit.transport.RemoteRefUpdate;
+import org.eclipse.jgit.transport.URIish;
 import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider;
 import org.eclipse.jgit.treewalk.TreeWalk;
 
 import java.io.IOException;
+import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -35,6 +43,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * Envoltorio de JGit para o repositorio de tradución clonado en lang/.
@@ -47,6 +56,59 @@ import java.util.Set;
 public class GitRepoService {
 
     public static final String DEFAULT_REMOTE = "https://github.com/manu-pc/deltarune-en-galego-DEV.git";
+
+    // Todas as instancias operan sobre a mesma carpeta lang/, e varios fíos tócana
+    // á vez (auto-pull en segundo plano en GuiApp + push manual en LocalView).
+    // Este lock estático serializa as operacións multi-paso (clone/pull/push) para
+    // que un auto-pull non se cole entre o commit e o push doutro fío.
+    private static final ReentrantLock GIT_LOCK = new ReentrantLock();
+
+    /** Progreso das operacións de rede (clone/pull/push) para amosar na UI. */
+    public interface ProgressListener {
+        /** percent = -1 significa indeterminado (traballo total descoñecido). */
+        void onProgress(String task, int percent);
+    }
+
+    /** Adapta o ProgressMonitor de JGit a un ProgressListener sinxelo. */
+    private static final class ListenerMonitor implements ProgressMonitor {
+        private final ProgressListener listener;
+        private String task = "";
+        private int total;
+        private int done;
+
+        ListenerMonitor(ProgressListener listener) {
+            this.listener = listener;
+        }
+
+        @Override public void start(int totalTasks) { }
+
+        @Override public void beginTask(String title, int totalWork) {
+            this.task = title != null ? title : "";
+            this.total = totalWork;
+            this.done = 0;
+            emit();
+        }
+
+        @Override public void update(int completed) {
+            this.done += completed;
+            emit();
+        }
+
+        @Override public void endTask() { }
+
+        @Override public boolean isCancelled() { return false; }
+
+        @Override public void showDuration(boolean enabled) { }
+
+        private void emit() {
+            int pct = total > 0 ? (int) Math.min(100L, done * 100L / total) : -1;
+            listener.onProgress(task, pct);
+        }
+    }
+
+    private static ProgressMonitor monitorOrNull(ProgressListener listener) {
+        return listener != null ? new ListenerMonitor(listener) : null;
+    }
 
     private final Path repoDir;
     private final Gson gson = new GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create();
@@ -65,21 +127,85 @@ public class GitRepoService {
      * a carpeta existente como copia de seguridade en vez de sobrescribila.
      */
     public void cloneRepo(String remoteUrl, String token) throws GitAPIException, IOException {
-        if (Files.exists(repoDir) && !isCloned()) {
-            boolean nonEmpty;
-            try (var stream = Files.list(repoDir)) {
-                nonEmpty = stream.findAny().isPresent();
+        cloneRepo(remoteUrl, token, null);
+    }
+
+    public void cloneRepo(String remoteUrl, String token, ProgressListener progress)
+            throws GitAPIException, IOException {
+        GIT_LOCK.lock();
+        try {
+            if (Files.exists(repoDir) && !isCloned()) {
+                boolean nonEmpty;
+                try (var stream = Files.list(repoDir)) {
+                    nonEmpty = stream.findAny().isPresent();
+                }
+                if (nonEmpty) {
+                    // A carpeta xa ten ficheiros pero sen .git: caso típico de descargar
+                    // o repo como .zip de GitHub. NON se pode mover/renomear a carpeta
+                    // (o propio .jar execútase dende dentro e Windows bloquéao -> "outro
+                    // proceso está a usar este ficheiro"). Nin sequera se pode sobrescribir
+                    // a árbore de traballo, porque o .jar en execución está trackeado no
+                    // repo. Solución: inicializar o git in situ e apuntar a HEAD á punta
+                    // remota cun reset "mixed" (só o índice; a árbore de traballo, que xa
+                    // coincide co commit do .zip, queda intacta e o .jar non se toca).
+                    initInPlace(remoteUrl, token, progress);
+                    return;
+                }
             }
-            if (nonEmpty) {
-                Path backup = repoDir.resolveSibling(repoDir.getFileName() + ".backup-" + System.currentTimeMillis());
-                Files.move(repoDir, backup);
-            }
+            CloneCommand clone = Git.cloneRepository()
+                    .setURI(remoteUrl)
+                    .setDirectory(repoDir.toFile())
+                    .setProgressMonitor(monitorOrNull(progress));
+            withAuth(clone, token);
+            clone.call().close();
+        } finally {
+            GIT_LOCK.unlock();
         }
-        CloneCommand clone = Git.cloneRepository()
-                .setURI(remoteUrl)
-                .setDirectory(repoDir.toFile());
-        withAuth(clone, token);
-        clone.call().close();
+    }
+
+    /**
+     * Adopta unha árbore de traballo existente (descargada como .zip, sen .git)
+     * como clon do repo remoto sen mover nin sobrescribir ningún ficheiro:
+     *  1. git init in situ,
+     *  2. engadir o remoto e facer fetch,
+     *  3. crear a rama local seguindo á remota e apuntar HEAD a ela,
+     *  4. reset MIXED (só actualiza o índice; a árbore de traballo queda igual).
+     * Como os ficheiros do .zip son idénticos ao commit remoto, a árbore queda
+     * limpa e o .jar en execución nunca se reescribe.
+     */
+    private void initInPlace(String remoteUrl, String token, ProgressListener progress)
+            throws GitAPIException, IOException {
+        try (Git git = Git.init().setDirectory(repoDir.toFile()).call()) {
+            Repository repo = git.getRepository();
+            git.remoteAdd().setName("origin").setUri(new URIish(remoteUrl)).call();
+            withAuth(git.fetch(), token)
+                    .setRemote("origin")
+                    .setProgressMonitor(monitorOrNull(progress))
+                    .call();
+
+            String branch = remoteDefaultBranch(git, token);
+            ObjectId remoteTip = repo.resolve("refs/remotes/origin/" + branch);
+            if (remoteTip == null) {
+                throw new IOException("non se puido atopar a rama remota orixe/" + branch);
+            }
+
+            // crear/actualizar a rama local -> punta remota e facer HEAD simbólico cara a ela
+            RefUpdate ru = repo.updateRef("refs/heads/" + branch);
+            ru.setNewObjectId(remoteTip);
+            ru.forceUpdate();
+            repo.updateRef(Constants.HEAD).link("refs/heads/" + branch);
+
+            // configurar o seguimento para que pull/push saiban a que rama remota van
+            StoredConfig cfg = repo.getConfig();
+            cfg.setString("branch", branch, "remote", "origin");
+            cfg.setString("branch", branch, "merge", "refs/heads/" + branch);
+            cfg.save();
+
+            // só índice: a árbore de traballo (idéntica ao commit) non se toca
+            git.reset().setMode(ResetCommand.ResetType.MIXED).setRef(branch).call();
+        } catch (URISyntaxException e) {
+            throw new IOException("URL do remoto non válida: " + remoteUrl, e);
+        }
     }
 
     /** Cambios reais en ficheiros trackeados. Ignora *.copy*.json e o dicionario persoal (non trackeados). */
@@ -97,6 +223,7 @@ public class GitRepoService {
 
     /** Pull seguro: só actúa se non hai cambios pendentes en ficheiros trackeados. */
     public PullOutcome pullIfSafe(String token) {
+        GIT_LOCK.lock();
         try {
             if (hasTrackedChanges()) return PullOutcome.SKIPPED_DIRTY;
             try (Git git = Git.open(repoDir.toFile())) {
@@ -107,7 +234,83 @@ public class GitRepoService {
             }
         } catch (Exception e) {
             return PullOutcome.FAILED;
+        } finally {
+            GIT_LOCK.unlock();
         }
+    }
+
+    /**
+     * Estado do remoto respecto ao local tras un fetch:
+     *  AHEAD       — o remoto ten commits que non temos (habería que reconciliar)
+     *  NOT_AHEAD   — o remoto non trae nada novo (estamos igual ou adiantados)
+     *  UNAVAILABLE — non se puido contactar co remoto (sen rede, token, etc.)
+     */
+    public enum RemoteState { AHEAD, NOT_AHEAD, UNAVAILABLE }
+
+    /** Fai fetch e di se o remoto avanzou. Non toca a árbore de traballo. */
+    public RemoteState checkRemoteAdvance(String token) {
+        GIT_LOCK.lock();
+        try (Git git = Git.open(repoDir.toFile())) {
+            withAuth(git.fetch(), token).call();
+            Repository repo = git.getRepository();
+            ObjectId local = repo.resolve("HEAD");
+            ObjectId remote = repo.resolve("refs/remotes/origin/" + remoteDefaultBranch(git, token));
+            if (local == null || remote == null || local.equals(remote)) return RemoteState.NOT_AHEAD;
+            try (RevWalk walk = new RevWalk(repo)) {
+                RevCommit localC = walk.parseCommit(local);
+                RevCommit remoteC = walk.parseCommit(remote);
+                // o remoto ten novidades se non é ancestro do local
+                return walk.isMergedInto(remoteC, localC) ? RemoteState.NOT_AHEAD : RemoteState.AHEAD;
+            }
+        } catch (Exception e) {
+            return RemoteState.UNAVAILABLE;
+        } finally {
+            GIT_LOCK.unlock();
+        }
+    }
+
+    /** True só se o remoto avanzou (fetch OK e ten commits novos). */
+    public boolean remoteHasNewCommits(String token) {
+        return checkRemoteAdvance(token) == RemoteState.AHEAD;
+    }
+
+    /**
+     * Commit + push de TODOS os ficheiros trackeados con cambios, reconciliando
+     * conflitos por clave JSON ficheiro a ficheiro (ver commitAndPush). Devolve
+     * Success se todo subiu, Conflict se algún entrou en conflito (coas súas PR
+     * abertas), ou Failure ante un erro duro.
+     */
+    public PushOutcome commitAndPushAllDirty(String subject, String authorName, String authorEmail, String token) {
+        List<String> dirty = new ArrayList<>();
+        GIT_LOCK.lock();
+        try (Git git = Git.open(repoDir.toFile())) {
+            Status st = git.status().call();
+            Set<String> set = new LinkedHashSet<>();
+            set.addAll(st.getModified());
+            set.addAll(st.getChanged());
+            dirty.addAll(set);
+        } catch (Exception e) {
+            return new PushOutcome.Failure(e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
+        } finally {
+            GIT_LOCK.unlock();
+        }
+        if (dirty.isEmpty()) return new PushOutcome.Success();
+
+        List<String> conflicts = new ArrayList<>();
+        List<String> prUrls = new ArrayList<>();
+        for (String rel : dirty) {
+            PushOutcome o = commitAndPush(Path.of(rel), subject, authorName, authorEmail, token);
+            if (o instanceof PushOutcome.Failure f) return f;
+            if (o instanceof PushOutcome.Conflict c) {
+                conflicts.add(rel + " (" + c.lineRanges() + ")");
+                if (c.prUrl() != null) prUrls.add(c.prUrl());
+            }
+        }
+        if (!conflicts.isEmpty()) {
+            return new PushOutcome.Conflict(String.join("; ", conflicts), "(varias ramas)",
+                    prUrls.isEmpty() ? null : String.join("  ", prUrls));
+        }
+        return new PushOutcome.Success();
     }
 
     // ---------------------------------------------------------------
@@ -118,7 +321,7 @@ public class GitRepoService {
         record Success() implements PushOutcome {
         }
 
-        record Conflict(String lineRanges, String fallbackBranch) implements PushOutcome {
+        record Conflict(String lineRanges, String fallbackBranch, String prUrl) implements PushOutcome {
         }
 
         record Failure(String reason) implements PushOutcome {
@@ -131,6 +334,7 @@ public class GitRepoService {
         String fullMessage = subject + "\n\nFeito dende amanuensis";
         PersonIdent author = new PersonIdent(authorName, authorEmail);
 
+        GIT_LOCK.lock();
         try (Git git = Git.open(repoDir.toFile())) {
             Repository repo = git.getRepository();
 
@@ -146,10 +350,12 @@ public class GitRepoService {
             }
 
             // Rexeitado: o remoto avanzou. Traer os cambios e reconciliar a nivel de clave JSON.
+            // Usar a rama por defecto do remoto (non o nome local: podería ser "master").
+            String remoteBranch = remoteDefaultBranch(git, token);
             withAuth(git.fetch(), token).call();
-            ObjectId theirsId = repo.resolve("refs/remotes/origin/master");
+            ObjectId theirsId = repo.resolve("refs/remotes/origin/" + remoteBranch);
             if (theirsId == null) {
-                return new PushOutcome.Failure("non se puido atopar a rama remota orixe/master");
+                return new PushOutcome.Failure("non se puido atopar a rama remota orixe/" + remoteBranch);
             }
 
             try (RevWalk walk = new RevWalk(repo)) {
@@ -192,7 +398,20 @@ public class GitRepoService {
 
                     List<Integer> conflictLines = mapKeysToLineIndices(theirsJson, conflictingKeys.keySet());
                     String ranges = compressRanges(conflictLines);
-                    return new PushOutcome.Conflict(ranges, branch);
+
+                    // Abrir unha PR da rama de conflito cara á rama activa, para que a
+                    // rama non quede orfa: un mantedor pode revisala e fusionala.
+                    String prUrl = null;
+                    GitHubApi.Repo ghRepo = GitHubApi.parseRepo(
+                            repo.getConfig().getString("remote", "origin", "url"));
+                    if (ghRepo != null) {
+                        String prTitle = "Conflito de tradución (liñas " + ranges + ")";
+                        String prBody = "Estas liñas (" + ranges + ") editáronse á vez ca outra persoa.\n\n"
+                                + "Os cambios están nesta rama para revisar e fusionar manualmente, "
+                                + "sen perder nada.\n\nFeito dende amanuensis.";
+                        prUrl = GitHubApi.createPullRequest(token, ghRepo, branch, remoteBranch, prTitle, prBody);
+                    }
+                    return new PushOutcome.Conflict(ranges, branch, prUrl);
                 }
 
                 // Sen conflito real: reconstruír o noso cambio enriba da punta remota actual
@@ -209,11 +428,36 @@ public class GitRepoService {
             }
         } catch (Exception e) {
             return new PushOutcome.Failure(e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
+        } finally {
+            GIT_LOCK.unlock();
         }
     }
 
+    /**
+     * Rama por defecto do remoto (o seu HEAD), consultada directamente ao
+     * servidor para NON depender da configuración local: unha copia antiga pode
+     * estar checkouteada en "master" e seguir a "origin/master", e un push sen
+     * refspec recrearía esa rama. Preguntamos ao remoto cal é o seu HEAD (symref)
+     * en vez de fiarnos do nome local. Se non se pode determinar, cae en "main".
+     */
+    private String remoteDefaultBranch(Git git, String token) {
+        try {
+            Collection<Ref> refs = withAuth(git.lsRemote(), token).setRemote("origin").call();
+            for (Ref r : refs) {
+                if (Constants.HEAD.equals(r.getName()) && r.isSymbolic()) {
+                    return Repository.shortenRefName(r.getTarget().getName()); // "main"
+                }
+            }
+        } catch (Exception ignored) {
+            // sen rede/token: caemos na rama por defecto coñecida
+        }
+        return "main";
+    }
+
     private boolean tryPush(Git git, String token) throws GitAPIException {
-        Iterable<PushResult> results = withAuth(git.push(), token).call();
+        Iterable<PushResult> results = withAuth(git.push(), token)
+                .setRefSpecs(new RefSpec("HEAD:refs/heads/" + remoteDefaultBranch(git, token)))
+                .call();
         for (PushResult r : results) {
             for (RemoteRefUpdate update : r.getRemoteUpdates()) {
                 if (update.getStatus() != RemoteRefUpdate.Status.OK

@@ -1,5 +1,6 @@
 package com.gui;
 
+import com.AppDir;
 import com.git.GitHubSession;
 import com.git.GitRepoService;
 import com.local.FileCopyManager;
@@ -11,7 +12,9 @@ import javafx.collections.FXCollections;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Scene;
+import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
+import javafx.scene.control.ButtonType;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.ContextMenu;
 import javafx.scene.control.Label;
@@ -96,7 +99,8 @@ public class LocalView {
         return t;
     });
 
-    private final GitRepoService gitRepoService = new GitRepoService(Path.of("lang"));
+    // O repo git é a carpeta base (a do jar), que contén .git e lang/.
+    private final GitRepoService gitRepoService = new GitRepoService(AppDir.base());
     // ruta relativa dentro de lang/, ou null se o ficheiro aberto non pertence ao repositorio
     private final Path relativeInRepo;
     // liñas (índice 1-based, coma na UI) gardadas nesta sesión, pendentes de subir
@@ -150,11 +154,13 @@ public class LocalView {
         this.relativeInRepo = computeRelativeInRepo(filename);
     }
 
-    // devolve a ruta relativa dentro de lang/ se filename está baixo esa carpeta, ou null
+    // Devolve a ruta relativa á raíz do repo (a carpeta actual, que contén .git e
+    // lang/) se filename está dentro dela, ou null. O resultado inclúe o prefixo
+    // lang/ (ex: lang/chapter1/strings.json), que é o que git precisa para o commit.
     private static Path computeRelativeInRepo(String filename) {
         try {
             Path abs = Path.of(filename).toAbsolutePath().normalize();
-            Path repoAbs = Path.of("lang").toAbsolutePath().normalize();
+            Path repoAbs = AppDir.base();
             if (abs.startsWith(repoAbs) && !abs.equals(repoAbs)) {
                 return repoAbs.relativize(abs);
             }
@@ -308,12 +314,10 @@ public class LocalView {
     private HBox buildBottomBar() {
         Button save = new Button("gardar");
         save.setOnAction(e -> doSaveFromEditBox());
-        Button saveChanges = new Button("gardar cambios");
-        saveChanges.setOnAction(e -> doSaveChanges());
         Button pushBtn = new Button("gardar e subir a GitHub");
         pushBtn.setOnAction(e -> doSaveAndPush());
-        Button refresh = new Button("refrescar");
-        refresh.setOnAction(e -> updateView());
+        Button viewChanges = new Button("ver cambios");
+        viewChanges.setOnAction(e -> doPullChanges());
         Button dumpTxt = new Button("exportar .txt");
         dumpTxt.setOnAction(e -> doDumpToTxt());
 
@@ -333,7 +337,7 @@ public class LocalView {
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
 
-        HBox bar = new HBox(8, save, saveChanges, pushBtn, refresh, dumpTxt,
+        HBox bar = new HBox(8, save, pushBtn, viewChanges, dumpTxt,
                 autoAdvanceCheck, spellOnEnterCheck, spacer, close);
         bar.setAlignment(Pos.CENTER_LEFT);
         return bar;
@@ -787,16 +791,6 @@ public class LocalView {
         }
     }
 
-    private void doSaveChanges() {
-        try {
-            fileCopyManager.saveToOriginal();
-            updateView();
-            status("cambios gardados no ficheiro orixinal", Color.SEAGREEN);
-        } catch (IOException e) {
-            status("erro ao gardar cambios: " + e.getMessage(), Color.CRIMSON);
-        }
-    }
-
     // ---------------------------------------------------------------
     // gardar e subir a GitHub
     // ---------------------------------------------------------------
@@ -865,30 +859,212 @@ public class LocalView {
     }
 
     private void runCommitAndPush(String subject, GitHubSession session) {
-        status("subindo a GitHub...", Color.TEAL);
-
-        com.git.GitHubAuth.GitHubUser user = session.getUser();
-        String authorName = user != null ? user.name() : "amanuensis";
-        String authorEmail = user != null ? user.noreplyEmail() : "amanuensis@users.noreply.github.com";
         Path targetFile = relativeInRepo;
+        ProgressDialog dlg = new ProgressDialog(stage, "Subindo cambios",
+                "Subindo os teus cambios a GitHub...");
+        dlg.show();
 
         gitExecutor.submit(() -> {
+            com.git.GitHubAuth.GitHubUser user = ensureUser(session);
+            if (user == null) { // ensureUser xa avisou
+                Platform.runLater(dlg::close);
+                return;
+            }
             GitRepoService.PushOutcome outcome = gitRepoService.commitAndPush(
-                    targetFile, subject, authorName, authorEmail, session.getToken());
+                    targetFile, subject, user.name(), user.noreplyEmail(), session.getToken());
             Platform.runLater(() -> {
-                if (outcome instanceof GitRepoService.PushOutcome.Success) {
-                    editedLines.clear();
-                    status("subido a GitHub correctamente", Color.SEAGREEN);
-                } else if (outcome instanceof GitRepoService.PushOutcome.Conflict c) {
-                    editedLines.clear();
-                    status("ocorreu un problema, outro usuario editou as liñas (" + c.lineRanges()
-                            + ") ao mesmo tempo que ti. os teus cambios foron gardados nunha rama separada e non se perderon.",
-                            Color.CRIMSON);
-                } else if (outcome instanceof GitRepoService.PushOutcome.Failure f) {
-                    status("erro ao subir: " + f.reason(), Color.CRIMSON);
-                }
+                dlg.close();
+                applyPushOutcome(outcome);
             });
         });
+    }
+
+    /**
+     * Devolve o usuario real conectado, pedíndoo a GitHub se aínda non o temos
+     * (sesión restaurada do disco). Se non se pode obter, avisa e devolve null:
+     * a autoría dun commit debe ser sempre a do usuario real. Chamar en 2º plano.
+     */
+    private com.git.GitHubAuth.GitHubUser ensureUser(GitHubSession session) {
+        com.git.GitHubAuth.GitHubUser user = session.getUser();
+        if (user == null) {
+            try {
+                user = com.git.GitHubAuth.fetchUser(session.getToken());
+                session.setUser(user);
+            } catch (Exception ex) {
+                Platform.runLater(() -> status(
+                        "non se puido verificar a túa conta de GitHub; comproba a conexión e téntao de novo",
+                        Color.CRIMSON));
+                return null;
+            }
+        }
+        return user;
+    }
+
+    /** Trata o resultado dun commit+push (fío de UI). Compartido por subir e por ver cambios. */
+    private void applyPushOutcome(GitRepoService.PushOutcome outcome) {
+        if (outcome instanceof GitRepoService.PushOutcome.Success) {
+            editedLines.clear();
+            status("subido a GitHub correctamente", Color.SEAGREEN);
+        } else if (outcome instanceof GitRepoService.PushOutcome.Conflict c) {
+            editedLines.clear();
+            String base = "ocorreu un problema, outro usuario editou as liñas (" + c.lineRanges()
+                    + ") ao mesmo tempo que ti. os teus cambios foron gardados nunha rama separada e non se perderon.";
+            if (c.prUrl() != null) {
+                status(base + " abriuse unha proposta de fusión: " + c.prUrl(), Color.CRIMSON);
+                openInBrowser(c.prUrl());
+            } else {
+                status(base + " (rama: " + c.fallbackBranch() + ")", Color.CRIMSON);
+            }
+        } else if (outcome instanceof GitRepoService.PushOutcome.Failure f) {
+            status("erro ao subir: " + f.reason(), Color.CRIMSON);
+        }
+    }
+
+    // Abrir unha URL no navegador do sistema nun proceso á parte. Non usar
+    // java.awt.Desktop: inicializa o toolkit AWT dende o fío de JavaFX e en
+    // Linux pode conxelar a app.
+    private void openInBrowser(String url) {
+        new Thread(() -> {
+            String os = System.getProperty("os.name", "").toLowerCase();
+            try {
+                if (os.contains("win")) {
+                    new ProcessBuilder("rundll32", "url.dll,FileProtocolHandler", url).start();
+                } else if (os.contains("mac")) {
+                    new ProcessBuilder("open", url).start();
+                } else {
+                    new ProcessBuilder("xdg-open", url).start();
+                }
+            } catch (IOException ignored) {
+                // sen abridor dispoñible: a URL xa se amosa na barra de estado
+            }
+        }, "open-browser").start();
+    }
+
+    // ---------------------------------------------------------------
+    // ver cambios: traer do servidor sen sobrescribir os cambios propios
+    // ---------------------------------------------------------------
+
+    private void doPullChanges() {
+        if (!gitRepoService.isCloned()) {
+            status("o proxecto de tradución non está descargado (pantalla inicial)", Color.DARKORANGE);
+            return;
+        }
+        GitHubSession session = GitHubSession.getInstance();
+        if (!session.isLoggedIn()) {
+            status("inicia sesión en GitHub para ver cambios (pantalla inicial)", Color.DARKORANGE);
+            return;
+        }
+        ProgressDialog dlg = new ProgressDialog(stage, "Buscando cambios",
+                "Buscando cambios no servidor...");
+        dlg.show();
+        boolean hasPendingEdits = !editedLines.isEmpty();
+        gitExecutor.submit(() -> {
+            // "cambios locais sen subir" = edicións pendentes na copia OU ficheiros
+            // trackeados modificados. Se ademais o remoto avanzou, hai que reconciliar:
+            // preguntar antes de subir, en vez de pullear silenciosamente.
+            boolean localWork;
+            try {
+                localWork = hasPendingEdits || gitRepoService.hasTrackedChanges();
+            } catch (Exception e) {
+                localWork = hasPendingEdits;
+            }
+            if (localWork) {
+                // hai cambios locais sen subir: segundo o estado do remoto, ofrecer subir
+                GitRepoService.RemoteState remote = gitRepoService.checkRemoteAdvance(session.getToken());
+                Platform.runLater(() -> {
+                    dlg.close();
+                    switch (remote) {
+                        case AHEAD -> promptUpload(session, GitSync.MSG_DIVERGED);
+                        case NOT_AHEAD -> promptUpload(session, GitSync.MSG_LOCAL_ONLY);
+                        case UNAVAILABLE -> status(
+                                "non se puido contactar co servidor; téntao máis tarde", Color.CRIMSON);
+                    }
+                });
+                return;
+            }
+            // sen cambios locais: pull seguro normal
+            GitRepoService.PullOutcome outcome = gitRepoService.pullIfSafe(session.getToken());
+            Platform.runLater(() -> {
+                dlg.close();
+                applyPullOutcome(outcome);
+            });
+        });
+    }
+
+    private void applyPullOutcome(GitRepoService.PullOutcome outcome) {
+        switch (outcome) {
+            case UP_TO_DATE -> status("estás ao día (sen cambios novos)", Color.SEAGREEN);
+            case SKIPPED_DIRTY -> status(
+                    "tes cambios gardados sen subir; súbeos antes de actualizar", Color.DARKORANGE);
+            case FAILED -> status("erro ao buscar cambios no servidor", Color.CRIMSON);
+            case UPDATED -> {
+                if (!editedLines.isEmpty()) {
+                    // non recargar por riba do traballo en curso: a copia está a salvo
+                    status("chegaron cambios do servidor. os teus cambios están a salvo na "
+                            + "copia; súbeos e reabre o ficheiro para ver os do servidor.",
+                            Color.DARKORANGE);
+                } else {
+                    // sen edicións pendentes: recargar para amosar os cambios do servidor
+                    reopenAt(currentIndex);
+                }
+            }
+        }
+    }
+
+    /** Pregunta se subir os cambios locais (a mensaxe cambia segundo o remoto avanzase ou non). */
+    private void promptUpload(GitHubSession session, String message) {
+        Alert a = new Alert(Alert.AlertType.CONFIRMATION, message, ButtonType.YES, ButtonType.NO);
+        a.setTitle("Cambios sen subir");
+        a.setHeaderText(null);
+        a.initOwner(stage);
+        a.showAndWait().ifPresent(bt -> {
+            if (bt == ButtonType.YES) {
+                uploadAllLocalChanges(session);
+            } else {
+                status("os teus cambios seguen sen subir", Color.DARKORANGE);
+            }
+        });
+    }
+
+    /** Vólca a copia aberta ao orixinal e sobe todos os cambios locais (con reconciliación/PR). */
+    private void uploadAllLocalChanges(GitHubSession session) {
+        try {
+            fileCopyManager.saveToOriginal();
+        } catch (IOException e) {
+            status("erro ao gardar os cambios: " + e.getMessage(), Color.CRIMSON);
+            return;
+        }
+        updateView();
+        ProgressDialog dlg = new ProgressDialog(stage, "Subindo cambios",
+                "Subindo os teus cambios ao servidor...");
+        dlg.show();
+        gitExecutor.submit(() -> {
+            com.git.GitHubAuth.GitHubUser user = ensureUser(session);
+            if (user == null) {
+                Platform.runLater(dlg::close);
+                return;
+            }
+            GitRepoService.PushOutcome outcome = gitRepoService.commitAndPushAllDirty(
+                    "Actualización de tradución", user.name(), user.noreplyEmail(), session.getToken());
+            Platform.runLater(() -> {
+                dlg.close();
+                applyPushOutcome(outcome);
+            });
+        });
+    }
+
+    /** Reabre o ficheiro (xa actualizado en disco) na mesma liña, descartando a copia vella. */
+    private void reopenAt(int index) {
+        try {
+            fileCopyManager.deleteCopy();
+            LocalView reloaded = new LocalView(filename, stage);
+            int last = Math.max(0, reloaded.locHelper.getLineCount() - 1);
+            reloaded.currentIndex = Math.min(Math.max(index, 0), last);
+            reloaded.show();
+            reloaded.status("actualizado cos cambios do servidor", Color.SEAGREEN);
+        } catch (Exception ex) {
+            status("chegaron cambios, pero non se puido recargar: " + ex.getMessage(), Color.CRIMSON);
+        }
     }
 
     private void nextLine() {
