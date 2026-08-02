@@ -144,13 +144,19 @@ public final class MarkerTokenizer {
                 // CASO ESPECIAL: Marcadores de cor \c ou \C
                 // Formato: \c seguido de EXACTAMENTE un carácter (ex: \cY, \cW, \cR)
                 if (j < n && (s.charAt(j) == 'c' || s.charAt(j) == 'C')) {
+                    int end;
                     if (j + 1 < n) {
-                        out.add(Token.format(s.substring(i, j + 2))); // ex: \cY
-                        i = j + 2;
+                        end = j + 2; // ex: \cY
                     } else {
-                        out.add(Token.format(s.substring(i, j + 1))); // \c ao final (caso límite)
-                        i = j + 1;
+                        end = j + 1; // \c ao final (caso límite)
                     }
+                    out.add(Token.format(s.substring(i, end)));
+                    // O prefixo de diálogo pode vir xusto detrás da cor
+                    // (\cp* Texto), igual que detrás de calquera outro marcador
+                    // (\E7* Texto). Sen isto, ese '*' líase como un placeholder de
+                    // cor máis: o prefixo desaparecía e o \cX do final da liña
+                    // remataba reaplicado ao principio.
+                    i = consumeDialoguePrefix(s, end, out);
                     continue;
                 }
 
@@ -182,13 +188,7 @@ public final class MarkerTokenizer {
                 // \E8*text → \E8 (FORMAT) + * (VISIBLE)
                 if (k < n && s.charAt(k) == '*') {
                     out.add(Token.format(tok));
-                    if (k + 1 < n && s.charAt(k + 1) == ' ') {
-                        out.add(Token.format("* "));
-                        i = k + 2;
-                    } else {
-                        out.add(Token.visible('*'));
-                        i = k + 1;
-                    }
+                    i = consumeDialoguePrefix(s, k, out);
                     continue;
                 }
 
@@ -295,4 +295,29 @@ public final class MarkerTokenizer {
         tokens.set(first, Token.format("("));
         tokens.set(last, Token.format(")"));
     }
+
+    /**
+     * Consome o prefixo de diálogo que veña xusto detrás dun marcador.
+     *
+     * En Deltarune o {@code * } que abre unha liña de diálogo pode ir pegado a
+     * calquera marcador: {@code \E7* Ola} e tamén {@code \cp* Ola}. Ten que
+     * quedar como FORMAT fixo; se se deixa como carácter normal confúndese co
+     * placeholder de cor e a liña reconstrúese mal.
+     *
+     * @param at posición do posible {@code *}
+     * @return posición seguinte a consumir
+     */
+    private static int consumeDialoguePrefix(String s, int at, List<Token> out) {
+        int n = s.length();
+        if (at >= n || s.charAt(at) != '*') {
+            return at;
+        }
+        if (at + 1 < n && s.charAt(at + 1) == ' ') {
+            out.add(Token.format("* "));
+            return at + 2;
+        }
+        out.add(Token.visible('*'));
+        return at + 1;
+    }
+
 }

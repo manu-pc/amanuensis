@@ -3,20 +3,17 @@
   "empty": "",
   "only_end_slash": "/",
   "only_end_percent": "%",
-
   "dialog_prefix": "* Hello there./",
   "dialog_prefix_no_space_marker": "*\\E2 Like it was like \\cYon speaker\\cW or something.",
   "dialog_prefix_no_space_marker2": "*\\EL Sounds like \\cYnormal Kris\\cW to me.",
   "dialog_prefix_no_space_marker3": "*\\E5 Well..^1. It wasn't. Something was \\cYweird\\cW.",
   "expr_then_prefix": "\\E0* Sure..^1. okay^1, we can try again./%",
   "expr_then_visible_star": "\\E8*text/",
-
   "per_line_prefix": "* You looked at the sky and took...&* Sunglasses!/%",
   "per_line_prefix_with_tilde": "* You won^1!&* Got ~1 EXP and ~2 D$.&* Susie's heal power increased!/%",
   "per_line_prefix_paren_tilde": "* (Clues acquired.)&* (Now you can report the hint to Susie.)~1",
   "per_line_prefix_paren_only": "* (...)&* (...)&* (You nodded.)/%",
   "per_line_prefix_hash": "* First line#* Second line/",
-
   "color_pair": "SUSIE GOT THE \\cYPOWER CROISSANT\\cW",
   "color_digit": "\\C2Hello\\C4 there/%",
   "color_c0": "\\c0plain\\cW/",
@@ -25,13 +22,11 @@
   "tilde_bare": "* A bare ~ tilde/",
   "backslash_o": "* Look \\O0here\\O1./",
   "backslash_i": "* Item \\I0name\\I1./",
-
   "newline_amp": "Ah, podo&moverme. Mola.",
   "newline_hash": "Ah, podo#moverme. Mola.",
   "newline_real": "Ah, podo\nmoverme. Mola.",
   "amp_with_real_newline": "Fish & chips\nsecond line",
   "newline_mixed": "one&two#three/",
-
   "pause_caret1_mid": "\\E7* Damn^1, nice outfit^1, Ralsei?\\f0/%",
   "pause_caret1_terminal": "\\E2* Of course^1!/%",
   "pause_caret1_terminal_dot": "\\ES* A letter to \"Alvin\"..^1. I think that's..^1. this pastor guy./",
@@ -40,17 +35,14 @@
   "pause_other_mid": "^6 \\M0ARE WE^6&CONNECTED^6?\\M1 ^6 ^6 %%",
   "pause_run": "To the majesty and^4&pray we not forget^6&the tale of DELTARUNE ^9^9^2 %%",
   "pause_inline_spaced": "* (You began to read the numbers in the pass code..^1. ^3 1 ^5 2 ^7 2 %%",
-
   "quote_pair": "\\E8* About the \"rules\" of this world. About the prophecy./",
   "quote_single_word": "\\EV* ..^1. \"Nothing\"?/",
-
   "end_slash_percent": "* Done./%",
   "end_double_percent": "* Done.%%",
   "end_space_before_percent": "from our hearts^2 %",
   "end_space_after_slash": "* (Take it?)/ ",
   "end_space_after_slash2": "* (Take one?)/ ",
   "trailing_space_no_end": "text with trailing space  ",
-
   "paren_wrapper": "* (Looks like the diner is full.)~1",
   "paren_wrapper_marker": "*\\EH (AM I THAT BAD???)",
   "paren_wrapper_marker2": "*\\EO (Then what's wagging behind her...?)",
@@ -60,13 +52,15 @@
   "paren_unopened": "INTERESTING...&BUT IT SUCKS... :(/%",
   "paren_smiley_only": ":(/%",
   "paren_with_marker_inside": "* ( \" \\M1      \" )/%",
-
   "fullwidth_punct": "\\E0* そうか^1。だが^1、それは違う^1！/%",
   "ellipsis_char": "* Well^1… I guess so^1…/%",
   "cjk_ideographic_space": "\\E1* ARE YOU^6　THERE^6?\\M1 ^6 %",
-
   "voice_markers": "\\E3* Yeah^1, or I'll kick your ass!\\f0/",
   "voice_lower_m": "\\m3* Whispering here./",
   "marker_run_start": "\\E0\\M1* Both markers first./%",
-  "no_visible_text": "\\E0\\M1/%"
+  "no_visible_text": "\\E0\\M1/%",
+  "ch5_color_then_dialogue_prefix": "\\cp* Cats can be nasty creatures^1, can't they^1, mew...?\\cW/",
+  "ch5_color_prefix_with_leading_format": "\\M1\\cp* Kris^1, is your hand okay?\\cW/",
+  "ch5_color_prefix_no_space": "\\cp*text/",
+  "ch5_color_at_end_only": "* Texto normal^1.\\cW/"
 }
