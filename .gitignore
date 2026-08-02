@@ -32,3 +32,4 @@ hunspellgal/
 
 # corpus completo opcional para o barrido de ida e volta (dato do xogo, non fai falta no repo)
 /eng-4.json
+.release-stage/

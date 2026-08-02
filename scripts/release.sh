@@ -29,9 +29,12 @@ if ! command -v gh >/dev/null; then
 fi
 
 cd "$here"
-version="$(./mvnw -q -o help:evaluate -Dexpression=project.version -DforceStdout 2>/dev/null | tail -1)"
-if [[ -z "$version" || "$version" == *ERROR* ]]; then
-  version="$(grep -m1 -oP '(?<=<version>)[^<]+' pom.xml)"
+# lese directamente do pom: help:evaluate pode non estar no repositorio local e
+# entón non se pode publicar sen rede, que é xusto cando máis molesta
+version="$(sed -n 's:.*<version>\(.*\)</version>.*:\1:p' pom.xml | head -1)"
+if [[ -z "$version" ]]; then
+  echo "non consigo ler a versión do pom.xml" >&2
+  exit 1
 fi
 tag="v$version"
 echo "== versión $version =="
@@ -43,21 +46,20 @@ if gh release view "$tag" --repo "$(git -C "$repo" remote get-url origin)" >/dev
   exit 1
 fi
 
-echo "== construíndo jar de Linux =="
-./mvnw -q clean package
-linux_jar="target/amanuensis-$version.jar"
-[[ -f "$linux_jar" ]] || linux_jar="$(ls target/amanuensis-*.jar | grep -v -- '-windows' | grep -v -- '-original' | head -1)"
+# Os dous jars constrúense con `clean`, así que cada build borra o anterior: por
+# iso se copian a unha carpeta de montaxe FÓRA de target/.
+stage="$here/.release-stage"
+rm -rf "$stage"
 
 echo "== construíndo jar de Windows =="
 ./mvnw -q -Pwindows clean package
-win_jar="target/amanuensis-windows-$version.jar"
-[[ -f "$win_jar" ]] || win_jar="$(ls target/amanuensis-windows-*.jar | grep -v -- '-original' | head -1)"
+mkdir -p "$stage"
+cp "$(ls target/amanuensis-windows-*.jar | grep -v -- '-original' | head -1)" \
+   "$stage/amanuensis-windows.jar"
 
-# O jar de Linux bórrase co `clean` do build de Windows: reconstrúese e gárdase aparte.
-stage="$here/target/release"
-rm -rf "$stage" && mkdir -p "$stage"
-cp "$win_jar" "$stage/amanuensis-windows.jar"
+echo "== construíndo jar de Linux =="
 ./mvnw -q clean package
+mkdir -p "$stage"
 cp "$(ls target/amanuensis-*.jar | grep -v -- '-windows' | grep -v -- '-original' | head -1)" \
    "$stage/amanuensis.jar"
 
@@ -101,6 +103,8 @@ git add update.json
 git -c user.name=manu-pc -c user.email=pereirocondemanuel@gmail.com \
     commit --author="manu-pc <pereirocondemanuel@gmail.com>" -m "amanuensis $version"
 git push origin "$branch"
+
+rm -rf "$stage"
 
 echo
 echo "publicado. As apps abertas verano no seguinte ciclo (30 min) ou con «buscar actualizacións»."
