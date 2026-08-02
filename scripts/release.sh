@@ -4,26 +4,27 @@
 # Que fai:
 #   1. constrúe os dous jars (Linux e Windows) coa versión do pom
 #   2. crea unha release en GitHub e sobe os jars como assets
-#   3. escribe update.json na raíz do repo de tradución e faille commit+push
+#   3. escribe update.json neste repo (o do código) e faille commit+push
 #
-# O update.json é o único que vai dentro do repositorio (uns 500 bytes). Os jars
-# quedan como assets da release: por iso o historial deixa de medrar 26 MB cada
-# vez, que era o que pasaba cando se commiteaban.
+# Publícase AQUÍ e non no repositorio de tradución porque aquel é privado: nin
+# raw.githubusercontent.com nin os assets dunha release privada responden sen
+# token. Neste, que é público, buscar e baixar actualizacións non precisa
+# credenciais de ningún tipo, así que funciona antes de iniciar sesión e cun
+# token caducado.
 #
-# Requisitos: gh (autenticado) e permiso de push no repo de tradución.
+# O update.json son uns 500 bytes; os jars van como assets da release, así que
+# ningún repositorio medra 26 MB por versión.
 #
-# uso: scripts/release.sh [raíz-do-repo-de-traducion]
+# Requisitos: gh (autenticado) e permiso de push neste repositorio.
+#
+# uso: scripts/release.sh
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-repo="${1:-$here/deltarune-en-galego-DEV}"
+repo="$here"   # a app publícase no seu propio repositorio, que é público
 
 if ! command -v gh >/dev/null; then
   echo "fai falta gh (GitHub CLI) autenticado: https://cli.github.com" >&2
-  exit 1
-fi
-if [[ ! -d "$repo/.git" ]]; then
-  echo "non atopo un repo git en $repo" >&2
   exit 1
 fi
 
@@ -97,7 +98,8 @@ EOF
 cd "$repo"
 branch="$(git rev-parse --abbrev-ref HEAD)"
 git add update.json
-git commit -m "amanuensis $version"
+git -c user.name=manu-pc -c user.email=pereirocondemanuel@gmail.com \
+    commit --author="manu-pc <pereirocondemanuel@gmail.com>" -m "amanuensis $version"
 git push origin "$branch"
 
 echo

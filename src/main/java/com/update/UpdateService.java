@@ -72,10 +72,30 @@ public final class UpdateService {
     // ---------------------------------------------------------------
 
     /**
-     * URL crúa do {@code update.json} deste repositorio, derivada da URL do remoto
-     * (a mesma que xa se usa para clonar), ou null se non é un repo de GitHub.
+     * Onde se publica a app: o repositorio <b>público</b> do código.
+     *
+     * Non se deriva do remoto do repositorio de tradución a propósito. Ese é
+     * privado, e tanto {@code raw.githubusercontent.com} coma os assets dunha
+     * release privada devolven 404 sen token. Publicar aquí fai que buscar e
+     * descargar actualizacións non precise credenciais de ningún tipo: funciona
+     * antes de iniciar sesión, nunha instalación recén feita, e tamén se o token
+     * do tradutor caducou.
      */
-    public static String manifestUrl(String originUrl, String branch) {
+    public static final String UPDATE_OWNER = "manu-pc";
+    public static final String UPDATE_REPO = "amanuensis";
+    public static final String UPDATE_BRANCH = "master";
+
+    /** URL crúa do {@code update.json} publicado. */
+    public static String manifestUrl() {
+        return "https://raw.githubusercontent.com/" + UPDATE_OWNER + "/" + UPDATE_REPO
+                + "/" + UPDATE_BRANCH + "/update.json";
+    }
+
+    /**
+     * Variante para probas e para un despregue noutro repositorio: constrúe a URL
+     * a partir dunha URL de remoto de GitHub. Devolve null se non se recoñece.
+     */
+    static String manifestUrl(String originUrl, String branch) {
         GitHubApi.Repo repo = GitHubApi.parseRepo(originUrl);
         if (repo == null) {
             return null;
@@ -90,8 +110,11 @@ public final class UpdateService {
      * roto devolve null, porque non poder comprobar actualizacións non pode
      * impedir traballar.
      */
-    public static UpdateManifest fetchManifest(String originUrl, String branch) {
-        String url = manifestUrl(originUrl, branch);
+    public static UpdateManifest fetchManifest() {
+        return fetchManifest(manifestUrl());
+    }
+
+    static UpdateManifest fetchManifest(String url) {
         if (url == null) {
             return null;
         }
@@ -115,8 +138,12 @@ public final class UpdateService {
      * Hai unha versión nova para esta plataforma? Devolve null se non, se non se
      * puido consultar, ou se esta é unha copia de desenvolvemento.
      */
-    public static Available check(String originUrl, String branch) {
-        UpdateManifest manifest = fetchManifest(originUrl, branch);
+    public static Available check() {
+        return check(manifestUrl());
+    }
+
+    static Available check(String url) {
+        UpdateManifest manifest = fetchManifest(url);
         if (manifest == null || !AppVersion.isNewerThanCurrent(manifest.version())) {
             return null;
         }

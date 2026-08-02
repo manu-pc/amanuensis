@@ -43,11 +43,23 @@ public class MainView {
 
     private final Stage stage;
     private Stage deviceDialog;
+    /**
+     * Que facer en canto haxa sesión. Úsao {@link GuiApp} para clonar só: o
+     * repositorio de tradución é privado, así que nunha carpeta baleira non se
+     * pode montar nada ata que o tradutor inicie sesión, e non ten sentido
+     * obrigalo a pulsar despois un segundo botón.
+     */
+    private static volatile Runnable afterLogin;
     private Thread loginThread;
     private volatile boolean loginCancelled;
 
     public MainView(Stage stage) {
         this.stage = stage;
+    }
+
+    /** Rexistra unha acción para executar cando o login remate correctamente. */
+    public static void onLogin(Runnable action) {
+        afterLogin = action;
     }
 
     public void show() {
@@ -242,6 +254,13 @@ public class MainView {
                     refreshLoginButton(btn, statusLabel);
                     statusLabel.setText("conectado como " + user.login());
                     btn.setDisable(false);
+                    Runnable pending = afterLogin;
+                    afterLogin = null;
+                    if (pending != null) {
+                        statusLabel.setText("conectado como " + user.login()
+                                + " — descargando o proxecto…");
+                        pending.run();
+                    }
                 });
             } catch (Exception ex) {
                 Platform.runLater(() -> {

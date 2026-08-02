@@ -7,7 +7,6 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.function.BooleanSupplier;
 
 import com.AppDir;
-import com.git.GitRepoService;
 import com.update.AppVersion;
 import com.update.UpdateService;
 
@@ -121,11 +120,9 @@ public final class UpdateUi {
             if (AppDir.runningJar() == null) {
                 return null; // en desenvolvemento non hai jar que substituír
             }
-            GitRepoService repo = new GitRepoService(AppDir.base());
-            if (!repo.isCloned()) {
-                return null;
-            }
-            return UpdateService.check(repo.originUrl(), repo.currentBranch());
+            // non fai falta nin repositorio clonado nin sesión iniciada: a app
+            // publícase nun repositorio público
+            return UpdateService.check();
         } catch (RuntimeException e) {
             return null;
         }

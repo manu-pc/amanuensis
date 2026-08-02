@@ -87,6 +87,11 @@ public class GuiApp extends Application {
                             new MainView(stage).show(); // a lista pode ter cambiado
                         }
                     }
+                    case NEEDS_LOGIN -> {
+                        // a carpeta está baleira e o repositorio é privado: en canto
+                        // haxa sesión, clónase sen que o tradutor teña que pulsar nada
+                        MainView.onLogin(this::bootstrapRepo);
+                    }
                     default -> {
                         // NOT_A_CLONE / OFFLINE: séguese traballando co que haxa
                     }

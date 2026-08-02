@@ -39,9 +39,16 @@ import com.local.LedgerStore;
  */
 public final class RepoBootstrap {
 
-    /** URL do repositorio de tradución cando hai que clonalo de cero. */
+    /**
+     * Repositorio de tradución que se clona cando a carpeta está baleira.
+     *
+     * É <b>privado</b>, así que clonar precisa o token da sesión: por iso o
+     * arranque non pode montar todo el só antes de iniciar sesión, e devolve
+     * {@link Outcome#NEEDS_LOGIN} para que a interface pida a sesión e volva
+     * chamar aquí en canto a teña.
+     */
     public static final String DEFAULT_REPO_URL =
-            "https://github.com/manu-pc/deltarune-en-galego-DEV";
+            "https://github.com/Deltarune-en-Galego/deltarune-en-galego-DEV";
 
     /**
      * Restos de etapas anteriores do proxecto. Bórranse só se xa non están no
@@ -61,6 +68,8 @@ public final class RepoBootstrap {
         PENDING_UPLOAD,
         /** A carpeta ten cousas pero non é un clon: non se toca nada. */
         NOT_A_CLONE,
+        /** Hai que clonar pero aínda non hai sesión (o repositorio é privado). */
+        NEEDS_LOGIN,
         /** Non se puido falar co remoto. */
         OFFLINE
     }
@@ -75,8 +84,8 @@ public final class RepoBootstrap {
     /**
      * Comproba e arranxa a carpeta base. Non fai nada que poida perder traballo.
      *
-     * @param token token de GitHub, ou null (o repositorio é público: clonar e
-     *              actualizar funcionan sen el)
+     * @param token token de GitHub, ou null. Sen el pódese poñer ao día un clon
+     *              que xa exista, pero non clonar de cero: o repositorio é privado
      */
     public static Report repair(String token) {
         Path base = AppDir.base();
@@ -86,6 +95,10 @@ public final class RepoBootstrap {
             if (!isEmptyEnoughToClone(base)) {
                 return new Report(Outcome.NOT_A_CLONE, List.of(),
                         "a carpeta ten ficheiros pero non é un clon do repositorio");
+            }
+            if (token == null || token.isBlank()) {
+                return new Report(Outcome.NEEDS_LOGIN, List.of(),
+                        "o repositorio de tradución é privado: fai falta iniciar sesión");
             }
             try {
                 repo.cloneRepo(DEFAULT_REPO_URL, token);

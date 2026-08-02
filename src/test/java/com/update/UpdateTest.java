@@ -103,7 +103,15 @@ class UpdateTest {
     }
 
     @Test
-    void manifestUrlComesFromTheGitRemote() {
+    void manifestComesFromThePublicCodeRepoNotThePrivateTranslationOne() {
+        // o repositorio de tradución é privado: raw.githubusercontent devolve 404
+        // sen token, así que a app búscase a si mesma no repositorio público
+        assertEquals("https://raw.githubusercontent.com/manu-pc/amanuensis/master/update.json",
+                UpdateService.manifestUrl());
+    }
+
+    @Test
+    void manifestUrlCanAlsoBeDerivedFromARemote() {
         assertEquals("https://raw.githubusercontent.com/owner/repo/main/update.json",
                 UpdateService.manifestUrl("https://github.com/owner/repo.git", "main"));
         assertEquals("https://raw.githubusercontent.com/owner/repo/master/update.json",
