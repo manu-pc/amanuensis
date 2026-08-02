@@ -3,9 +3,18 @@ package com.gui;
 import com.AppDir;
 import com.git.GitHubSession;
 import com.git.GitRepoService;
-import com.local.FileCopyManager;
+import com.git.KeyMerge;
+import com.google.gson.JsonObject;
+import com.local.EditLedger;
 import com.local.HunspellChecker;
+import com.local.JsonIo;
+import com.local.LedgerStore;
 import com.local.LocHelper;
+import com.local.TranslationStore;
+import com.local.map.MessageMap;
+import com.local.map.MessagePropagator;
+import com.local.markers.MarkerRenderer;
+import com.local.markers.MarkerSummary;
 
 import javafx.application.Platform;
 import javafx.collections.FXCollections;
@@ -49,8 +58,10 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.SortedSet;
 import java.util.TreeSet;
@@ -81,7 +92,7 @@ public class LocalView {
 
     private final Stage stage;
     private final LocHelper locHelper;
-    private final FileCopyManager fileCopyManager;
+    private final TranslationStore store;
     private final String filename;
     private final HunspellChecker spellChecker;
 
@@ -103,8 +114,10 @@ public class LocalView {
     private final GitRepoService gitRepoService = new GitRepoService(AppDir.base());
     // ruta relativa dentro de lang/, ou null se o ficheiro aberto non pertence ao repositorio
     private final Path relativeInRepo;
-    // liñas (índice 1-based, coma na UI) gardadas nesta sesión, pendentes de subir
-    private final SortedSet<Integer> editedLines = new TreeSet<>();
+    // edicións que quedaran no rexistro e se restauraron ao abrir (caída da app)
+    private final int pendingRestoredOnOpen;
+    // mensaxes que se repiten entre capítulos (baleiro se non hai message-map.json)
+    private final MessageMap messageMap;
 
     private boolean textoBase = false;
     private boolean autoAdvance = true;
@@ -112,8 +125,10 @@ public class LocalView {
 
     // compoñentes que precisan actualizarse
     private Label indexLabel;
+    private Label pendingLabel;       // "N pendentes de subir a GitHub"
     private Label keyLabel;
     private Label infoLabel;
+    private Label repeatLabel;        // "⚠ xa aparece no capítulo N"
     private TextArea literalArea;     // lectura: liña literal con indicadores ⏎
     private TextArea cleanArea;       // lectura: liña limpa
     private InlineCssTextArea editArea; // editor con subliñado ortográfico
@@ -149,9 +164,23 @@ public class LocalView {
         this.stage = stage;
         this.filename = filename;
         this.locHelper = new LocHelper(filename);
-        this.fileCopyManager = new FileCopyManager(locHelper, filename);
-        this.spellChecker = new HunspellChecker();
         this.relativeInRepo = computeRelativeInRepo(filename);
+
+        // As gardas van directas ao ficheiro real; o rexistro de edicións (fóra de
+        // lang/) é quen sabe que claves son do usuario e con que valor de partida.
+        Path file = Path.of(filename).toAbsolutePath().normalize();
+        Path repoRoot = relativeInRepo != null ? AppDir.base() : null;
+        EditLedger ledger = EditLedger.openFor(file, repoRoot);
+        // mapa de mensaxes repetidas entre capítulos; se non está o ficheiro,
+        // MessageMap.load devolve un baleiro e todo funciona sen propagación
+        this.messageMap = MessageMap.load(repoRoot);
+        this.store = new TranslationStore(locHelper, file, ledger, repoRoot, messageMap);
+        // Se a app morreu no medio dunha garda, o valor do rexistro non chegou ao
+        // ficheiro: restáurase agora.
+        int restored = store.applyPendingFromLedger();
+        this.pendingRestoredOnOpen = restored;
+
+        this.spellChecker = new HunspellChecker();
     }
 
     // Devolve a ruta relativa á raíz do repo (a carpeta actual, que contén .git e
@@ -222,6 +251,16 @@ public class LocalView {
         root.getChildren().add(buildBottomBar());
 
         updateView();
+        updatePendingIndicator();
+        if (pendingRestoredOnOpen > 0) {
+            status("restauráronse " + pendingRestoredOnOpen
+                    + " liña(s) pendentes que non chegaran a gardarse (a app pechouse a medio gardar)",
+                    Color.DARKORANGE);
+        }
+
+        // mentres haxa texto a medio escribir, o aviso de actualización cala: un
+        // reinicio non perde nada gardado, pero si perdería a caixa de edición
+        UpdateUi.setBusyEditing(() -> !editArea.getText().isBlank());
 
         Scene scene = new Scene(root, 920, 780);
         stage.setScene(scene);
@@ -267,13 +306,15 @@ public class LocalView {
         timeLabel.setTextFill(Color.TEAL);
 
         indexLabel = new Label("");
+        pendingLabel = new Label("");
+        pendingLabel.setTextFill(Color.DARKORANGE);
 
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
 
         HBox bar = new HBox(8, prevBtn, nextBtn, gotoEnd,
                 new Label("ir:"), gotoField, gotoBtn, baseCheck,
-                spacer, timeLabel, indexLabel);
+                spacer, timeLabel, pendingLabel, indexLabel);
         bar.setAlignment(Pos.CENTER_LEFT);
         return bar;
     }
@@ -306,7 +347,10 @@ public class LocalView {
         keyLabel.setTextFill(Color.GOLDENROD);
         infoLabel = new Label("");
         infoLabel.setTextFill(Color.TEAL);
-        HBox bar = new HBox(16, keyLabel, infoLabel);
+        repeatLabel = new Label("");
+        repeatLabel.setTextFill(Color.DARKORANGE);
+        repeatLabel.setWrapText(true);
+        HBox bar = new HBox(16, keyLabel, infoLabel, repeatLabel);
         bar.setAlignment(Pos.CENTER_LEFT);
         return bar;
     }
@@ -684,13 +728,6 @@ public class LocalView {
     // lóxica de localización (porte directo de VentanaLocal)
     // ---------------------------------------------------------------
 
-    private String formatLiteralForDisplay(String literal) {
-        return literal
-                .replace("&", "⏎&\n")
-                .replace("#", "⏎#\n")
-                .replace("\n", "⏎\\n\n");
-    }
-
     private void doSearch(String term) {
         if (term == null || term.trim().isEmpty()) {
             searchResults.clear();
@@ -775,17 +812,38 @@ public class LocalView {
         String formatted = locHelper.reapplyFormatting(currentIndex, newPlain);
 
         try {
-            fileCopyManager.updateLine(currentIndex, formatted);
-            editedLines.add(currentIndex + 1);
+            if (!store.save(currentIndex, formatted)) {
+                // o texto era idéntico ao que xa había: non se marca nada, e así unha
+                // garda accidental non pode subir nin desfacer o traballo doutra persoa
+                status("sen cambios: esa liña xa tiña ese texto", Color.DARKORANGE);
+                return;
+            }
             String shortFmt = formatted.length() > 60 ? formatted.substring(0, 57) + "..." : formatted;
             String savedMsg = "gardado [" + (currentIndex + 1) + "]: " + shortFmt;
-            status(savedMsg, Color.SEAGREEN);
+            MessagePropagator.Result prop = store.lastPropagation();
+            Color savedColor = Color.SEAGREEN;
+            if (!prop.isEmpty()) {
+                savedMsg = savedMsg + "  |  " + prop.summary();
+                // sobrescribir outra tradución ou perder claves merece verse
+                if (!prop.overwritten().isEmpty() || !prop.missing().isEmpty()
+                        || !prop.errors().isEmpty()) {
+                    savedColor = Color.DARKORANGE;
+                }
+            }
+            status(savedMsg, savedColor);
 
             if (autoAdvance && currentIndex < locHelper.getLineCount() - 1) {
                 currentIndex++;
                 updateView();
-                status(savedMsg, Color.SEAGREEN);
+                status(savedMsg, savedColor); // updateView deixara "listo"
+            } else {
+                updatePendingIndicator();
             }
+        } catch (TranslationStore.KeyMissingException e) {
+            // chegou un cambio de estrutura do servidor: recargar en vez de escribir
+            // pola posición (iso metía a tradución na clave equivocada)
+            status("o ficheiro cambiou no servidor; recargando...", Color.DARKORANGE);
+            reloadInPlace(currentIndex);
         } catch (IOException e) {
             status("erro ao gardar: " + e.getMessage(), Color.CRIMSON);
         }
@@ -810,20 +868,14 @@ public class LocalView {
             return;
         }
 
-        try {
-            fileCopyManager.saveToOriginal();
-        } catch (IOException ex) {
-            status("erro ao gardar cambios: " + ex.getMessage(), Color.CRIMSON);
-            return;
-        }
-        updateView();
-
-        if (editedLines.isEmpty()) {
-            status("non hai liñas editadas nesta sesión para subir", Color.DARKORANGE);
+        // Xa non hai nada que volcar: cada garda foi directa ao ficheiro real.
+        if (store.pendingCount() == 0) {
+            status("non hai liñas editadas pendentes de subir", Color.DARKORANGE);
             return;
         }
 
-        String subject = "Tradución liñas (" + GitRepoService.compressRanges(new ArrayList<>(editedLines)) + ")";
+        String subject = "Tradución liñas ("
+                + GitRepoService.compressRanges(store.pendingLineNumbers()) + ")";
         showCommitMessageDialog(subject, session);
     }
 
@@ -860,6 +912,9 @@ public class LocalView {
 
     private void runCommitAndPush(String subject, GitHubSession session) {
         Path targetFile = relativeInRepo;
+        // Só se poden mover as claves rexistradas: o resto do ficheiro vai coma no
+        // repositorio, aínda que o disco local estea desactualizado.
+        Map<String, KeyMerge.KeyEdit> edits = KeyMerge.fromLedger(store.ledger().entries());
         ProgressDialog dlg = new ProgressDialog(stage, "Subindo cambios",
                 "Subindo os teus cambios a GitHub...");
         dlg.show();
@@ -870,11 +925,11 @@ public class LocalView {
                 Platform.runLater(dlg::close);
                 return;
             }
-            GitRepoService.PushOutcome outcome = gitRepoService.commitAndPush(
-                    targetFile, subject, user.name(), user.noreplyEmail(), session.getToken());
+            GitRepoService.PushOutcome outcome = gitRepoService.commitAndPushKeys(
+                    targetFile, edits, subject, user.name(), user.noreplyEmail(), session.getToken());
             Platform.runLater(() -> {
                 dlg.close();
-                applyPushOutcome(outcome);
+                applyPushOutcome(outcome, edits.keySet());
             });
         });
     }
@@ -900,24 +955,43 @@ public class LocalView {
         return user;
     }
 
-    /** Trata o resultado dun commit+push (fío de UI). Compartido por subir e por ver cambios. */
-    private void applyPushOutcome(GitRepoService.PushOutcome outcome) {
-        if (outcome instanceof GitRepoService.PushOutcome.Success) {
-            editedLines.clear();
-            status("subido a GitHub correctamente", Color.SEAGREEN);
-        } else if (outcome instanceof GitRepoService.PushOutcome.Conflict c) {
-            editedLines.clear();
-            String base = "ocorreu un problema, outro usuario editou as liñas (" + c.lineRanges()
-                    + ") ao mesmo tempo que ti. os teus cambios foron gardados nunha rama separada e non se perderon.";
-            if (c.prUrl() != null) {
-                status(base + " abriuse unha proposta de fusión: " + c.prUrl(), Color.CRIMSON);
-                openInBrowser(c.prUrl());
-            } else {
-                status(base + " (rama: " + c.fallbackBranch() + ")", Color.CRIMSON);
+    /**
+     * Trata o resultado dun commit+push (fío de UI). Compartido por subir e por ver
+     * cambios.
+     *
+     * O rexistro de edicións só se limpa cando as edicións chegaron a algures: se o
+     * push falla, mantense para poder reintentar (antes borrábase sempre e o traballo
+     * quedaba sen rastro).
+     *
+     * @param pushedKeys claves que se intentaron subir nesta operación
+     */
+    private void applyPushOutcome(GitRepoService.PushOutcome outcome, Set<String> pushedKeys) {
+        try {
+            if (outcome instanceof GitRepoService.PushOutcome.Success) {
+                store.ledger().remove(pushedKeys);
+                status("subido a GitHub correctamente", Color.SEAGREEN);
+                reloadInPlace(currentIndex);
+            } else if (outcome instanceof GitRepoService.PushOutcome.Conflict c) {
+                // As nosas versións quedaron na rama de conflito (e na PR), e a árbore
+                // local volveu ao estado do servidor: sacar esas claves do rexistro,
+                // que doutro xeito volverían dar conflito unha e outra vez.
+                store.ledger().remove(pushedKeys);
+                String base = "ocorreu un problema, outro usuario editou as liñas (" + c.lineRanges()
+                        + ") ao mesmo tempo que ti. os teus cambios foron gardados nunha rama separada e non se perderon.";
+                if (c.prUrl() != null) {
+                    status(base + " abriuse unha proposta de fusión: " + c.prUrl(), Color.CRIMSON);
+                    openInBrowser(c.prUrl());
+                } else {
+                    status(base + " (rama: " + c.fallbackBranch() + ")", Color.CRIMSON);
+                }
+                reloadInPlace(currentIndex);
+            } else if (outcome instanceof GitRepoService.PushOutcome.Failure f) {
+                status("erro ao subir (os teus cambios seguen gardados): " + f.reason(), Color.CRIMSON);
             }
-        } else if (outcome instanceof GitRepoService.PushOutcome.Failure f) {
-            status("erro ao subir: " + f.reason(), Color.CRIMSON);
+        } catch (IOException e) {
+            status("erro ao actualizar o rexistro de edicións: " + e.getMessage(), Color.CRIMSON);
         }
+        updatePendingIndicator();
     }
 
     // Abrir unha URL no navegador do sistema nun proceso á parte. Non usar
@@ -957,18 +1031,12 @@ public class LocalView {
         ProgressDialog dlg = new ProgressDialog(stage, "Buscando cambios",
                 "Buscando cambios no servidor...");
         dlg.show();
-        boolean hasPendingEdits = !editedLines.isEmpty();
+        boolean hasPendingEdits = LedgerStore.hasPendingEdits(AppDir.base());
         gitExecutor.submit(() -> {
-            // "cambios locais sen subir" = edicións pendentes na copia OU ficheiros
-            // trackeados modificados. Se ademais o remoto avanzou, hai que reconciliar:
-            // preguntar antes de subir, en vez de pullear silenciosamente.
-            boolean localWork;
-            try {
-                localWork = hasPendingEdits || gitRepoService.hasTrackedChanges();
-            } catch (Exception e) {
-                localWork = hasPendingEdits;
-            }
-            if (localWork) {
+            // "cambios locais sen subir" = edicións rexistradas. Xa non se pregunta por
+            // ficheiros simplemente modificados: un ficheiro sucio sen rexistro non é
+            // traballo do usuario (era o que arrastraba claves obsoletas aos commits).
+            if (hasPendingEdits) {
                 // hai cambios locais sen subir: segundo o estado do remoto, ofrecer subir
                 GitRepoService.RemoteState remote = gitRepoService.checkRemoteAdvance(session.getToken());
                 Platform.runLater(() -> {
@@ -995,19 +1063,15 @@ public class LocalView {
         switch (outcome) {
             case UP_TO_DATE -> status("estás ao día (sen cambios novos)", Color.SEAGREEN);
             case SKIPPED_DIRTY -> status(
-                    "tes cambios gardados sen subir; súbeos antes de actualizar", Color.DARKORANGE);
+                    "hai cambios locais sen rexistrar neste repositorio; revísaos antes de actualizar",
+                    Color.DARKORANGE);
+            case DIVERGED -> promptUpload(GitHubSession.getInstance(), GitSync.MSG_DIVERGED);
             case FAILED -> status("erro ao buscar cambios no servidor", Color.CRIMSON);
-            case UPDATED -> {
-                if (!editedLines.isEmpty()) {
-                    // non recargar por riba do traballo en curso: a copia está a salvo
-                    status("chegaron cambios do servidor. os teus cambios están a salvo na "
-                            + "copia; súbeos e reabre o ficheiro para ver os do servidor.",
-                            Color.DARKORANGE);
-                } else {
-                    // sen edicións pendentes: recargar para amosar os cambios do servidor
-                    reopenAt(currentIndex);
-                }
-            }
+            // Sempre se recarga: as edicións pendentes non se perden (están no rexistro,
+            // e reaplícanse por riba do que veña do servidor), e a vista deixa de amosar
+            // texto vello, que era o que facía que a seguinte garda partise dun estado
+            // obsoleto.
+            case UPDATED -> reloadInPlace(currentIndex);
         }
     }
 
@@ -1026,15 +1090,8 @@ public class LocalView {
         });
     }
 
-    /** Vólca a copia aberta ao orixinal e sobe todos os cambios locais (con reconciliación/PR). */
+    /** Sobe todas as edicións rexistradas do repositorio (con reconciliación/PR). */
     private void uploadAllLocalChanges(GitHubSession session) {
-        try {
-            fileCopyManager.saveToOriginal();
-        } catch (IOException e) {
-            status("erro ao gardar os cambios: " + e.getMessage(), Color.CRIMSON);
-            return;
-        }
-        updateView();
         ProgressDialog dlg = new ProgressDialog(stage, "Subindo cambios",
                 "Subindo os teus cambios ao servidor...");
         dlg.show();
@@ -1044,27 +1101,74 @@ public class LocalView {
                 Platform.runLater(dlg::close);
                 return;
             }
+            // Sobe TODOS os rexistros pendentes do repo (non só o desta fiestra); o
+            // propio GitRepoService xa os limpa segundo o resultado.
             GitRepoService.PushOutcome outcome = gitRepoService.commitAndPushAllDirty(
                     "Actualización de tradución", user.name(), user.noreplyEmail(), session.getToken());
             Platform.runLater(() -> {
                 dlg.close();
-                applyPushOutcome(outcome);
+                applyAllDirtyPushOutcome(outcome);
             });
         });
     }
 
-    /** Reabre o ficheiro (xa actualizado en disco) na mesma liña, descartando a copia vella. */
-    private void reopenAt(int index) {
-        try {
-            fileCopyManager.deleteCopy();
-            LocalView reloaded = new LocalView(filename, stage);
-            int last = Math.max(0, reloaded.locHelper.getLineCount() - 1);
-            reloaded.currentIndex = Math.min(Math.max(index, 0), last);
-            reloaded.show();
-            reloaded.status("actualizado cos cambios do servidor", Color.SEAGREEN);
-        } catch (Exception ex) {
-            status("chegaron cambios, pero non se puido recargar: " + ex.getMessage(), Color.CRIMSON);
+    /**
+     * Trata o resultado dunha subida de TODOS os rexistros pendentes (ver
+     * {@link #uploadAllLocalChanges}). A diferenza de {@link #applyPushOutcome},
+     * o propio {@link GitRepoService} xa limpou os rexistros afectados (poden ser
+     * doutros ficheiros que esta fiestra non ten en memoria); aquí só se refresca
+     * a vista para que o rexistro deste ficheiro (posiblemente mudado por outro
+     * proceso) volva coincidir.
+     */
+    private void applyAllDirtyPushOutcome(GitRepoService.PushOutcome outcome) {
+        if (outcome instanceof GitRepoService.PushOutcome.Success) {
+            status("subido a GitHub correctamente", Color.SEAGREEN);
+            reloadInPlace(currentIndex);
+        } else if (outcome instanceof GitRepoService.PushOutcome.Conflict c) {
+            String base = "ocorreu un problema, outro usuario editou as liñas (" + c.lineRanges()
+                    + ") ao mesmo tempo que ti. os teus cambios foron gardados nunha rama separada e non se perderon.";
+            if (c.prUrl() != null) {
+                status(base + " abriuse unha proposta de fusión: " + c.prUrl(), Color.CRIMSON);
+                openInBrowser(c.prUrl());
+            } else {
+                status(base + " (rama: " + c.fallbackBranch() + ")", Color.CRIMSON);
+            }
+            reloadInPlace(currentIndex);
+        } else if (outcome instanceof GitRepoService.PushOutcome.Failure f) {
+            status("erro ao subir (os teus cambios seguen gardados): " + f.reason(), Color.CRIMSON);
         }
+        updatePendingIndicator();
+    }
+
+    /**
+     * Volve ler o ficheiro do disco (xa actualizado por un pull/push) e reaxusta o
+     * rexistro de edicións pendentes contra o novo contido, sen reconstruír a
+     * fiestra: as edicións pendentes (fóra desta liña) non se perden porque viven
+     * no rexistro, non na vista. Se algunha clave pendente tamén cambiou no
+     * servidor, avísase (o rexistro adopta o valor do servidor coma nova base).
+     */
+    private void reloadInPlace(int index) {
+        try {
+            locHelper.reload();
+            JsonObject disk = JsonIo.read(store.file());
+            List<String> clashes = store.ledger().rebaseAgainst(disk);
+            int last = Math.max(0, locHelper.getLineCount() - 1);
+            currentIndex = Math.min(Math.max(index, 0), last);
+            updateView();
+            updatePendingIndicator();
+            if (!clashes.isEmpty()) {
+                status("algunhas das túas edicións pendentes (" + clashes.size()
+                        + ") tamén cambiaron no servidor; revísaas antes de subir", Color.DARKORANGE);
+            }
+        } catch (IOException e) {
+            status("chegaron cambios, pero non se puideron recargar: " + e.getMessage(), Color.CRIMSON);
+        }
+    }
+
+    /** Actualiza a etiqueta de liñas pendentes de subir a GitHub. */
+    private void updatePendingIndicator() {
+        int pending = store.pendingCount();
+        pendingLabel.setText(pending == 0 ? "" : pending + " pendente(s) de subir");
     }
 
     private void nextLine() {
@@ -1097,6 +1201,7 @@ public class LocalView {
             indexLabel.setText("0/0");
             keyLabel.setText("");
             infoLabel.setText("");
+            repeatLabel.setText("");
             literalArea.setText("(ficheiro baleiro)");
             cleanArea.setText("");
             editArea.replaceText("");
@@ -1112,22 +1217,23 @@ public class LocalView {
         indexLabel.setText(String.format("%d / %d", currentIndex + 1, total));
 
         String key = locHelper.getKey(currentIndex);
-        String literal = locHelper.getOriginal(currentIndex);
         String clean = locHelper.stripFormatting(currentIndex);
 
         keyLabel.setText("key: " + key);
 
-        int newlineCount = locHelper.countNewlines(currentIndex);
+        MarkerSummary markers = locHelper.markerSummary(currentIndex);
         StringBuilder info = new StringBuilder();
-        info.append("[").append(newlineCount).append(" liñas]");
-        if (locHelper.hasColorMarkers(currentIndex)) info.append(" [cor *]");
-        if (locHelper.hasTildeMarkers(currentIndex)) info.append(" [efecto ~]");
-        if (locHelper.hasBackslashOMarkers(currentIndex)) info.append(" [\\O @]");
-        if (locHelper.hasBackslashIMarkers(currentIndex)) info.append(" [\\I $]");
-        if (locHelper.hasPauseMarkers(currentIndex)) info.append(" [pausa]");
+        info.append("[").append(markers.newlineCount()).append(" liñas]");
+        if (markers.hasColor()) info.append(" [cor *]");
+        if (markers.hasTilde()) info.append(" [efecto ~]");
+        if (markers.hasBackslashO()) info.append(" [\\O @]");
+        if (markers.hasBackslashI()) info.append(" [\\I $]");
+        if (markers.hasPause()) info.append(" [pausa]");
         infoLabel.setText(info.toString());
 
-        literalArea.setText(formatLiteralForDisplay(literal));
+        updateRepeatWarning();
+
+        literalArea.setText(MarkerRenderer.literalForDisplay(locHelper.tokens(currentIndex)));
         cleanArea.setText(clean);
 
         editArea.replaceText(textoBase ? clean : "");
@@ -1140,6 +1246,48 @@ public class LocalView {
         lastRegions = Collections.emptyList();
 
         gotoField.setText(String.valueOf(currentIndex + 1));
+    }
+
+    /**
+     * Aviso de que a liña actual xa apareceu antes: se está traducida nun capítulo
+     * anterior, o normal é non tocala aquí (e se se toca, o cambio propágase a
+     * todas as aparicións). Sen {@code message-map.json} o aviso non sae nunca.
+     */
+    private void updateRepeatWarning() {
+        MessageMap.Group group = store.groupOf(currentIndex);
+        if (group == null) {
+            repeatLabel.setText("");
+            return;
+        }
+        List<MessageMap.Member> earlier = store.earlierOccurrences(currentIndex);
+        int others = group.members().size() - 1;
+
+        StringBuilder sb = new StringBuilder("⚠ ");
+        if (earlier.isEmpty()) {
+            sb.append("repetida: aparece tamén en ").append(others)
+                    .append(others == 1 ? " sitio máis" : " sitios máis");
+        } else {
+            sb.append("xa vén de ").append(chapterLabel(earlier.get(0).relPath()));
+            if (earlier.size() > 1) {
+                sb.append(" (+").append(earlier.size() - 1).append(")");
+            }
+            sb.append(" — ao gardar propágase ás ").append(others).append(" aparicións");
+        }
+        if (group.ambiguous()) {
+            sb.append(" [duplicada dentro dun capítulo]");
+        }
+        repeatLabel.setText(sb.toString());
+    }
+
+    /** "lang/chapter2/strings.json" -> "capítulo 2"; a raíz é o menú de capítulos. */
+    private static String chapterLabel(String relPath) {
+        java.util.regex.Matcher m =
+                java.util.regex.Pattern.compile("chapter(\\d+)").matcher(relPath);
+        String last = null;
+        while (m.find()) {
+            last = m.group(1);
+        }
+        return last != null ? "capítulo " + last : "menú de capítulos";
     }
 
     private void updatePreview() {

@@ -1,0 +1,14 @@
+# Liñas que NON sobreviven a reapply(strip(orixinal)) == orixinal.
+# Formato: fixture:clave<TAB>razón
+# A lista só pode encoller: se un arranxo fai pasar unha liña, bórrase a entrada
+# (a proba falla se sobra unha entrada, para forzar a limpeza).
+# Actualizar desde target/roundtrip-actual-<fixture>.txt despois de cada fase.
+#
+# Casos inherentes ao deseño, non erros pendentes:
+#  - pausa no medio dunha palabra latina (efecto de escritura letra a letra:
+#    "SOMEON^3E", "b^3e", "You^5r"): as pausas van a límites de palabra, que é o
+#    que ten sentido cando a tradución cambia as palabras.
+#  - asterisco literal no texto dunha liña que TAMÉN leva marcadores de cor: o
+#    "*" do texto e o placeholder de cor son o mesmo carácter e non se poden
+#    distinguir (2 liñas no corpus completo de 15771).
+corpus-sample.json:DEVICE_CONTACT_slash_Step_0_gml_794_0	pausa no medio de palabra (deseño)

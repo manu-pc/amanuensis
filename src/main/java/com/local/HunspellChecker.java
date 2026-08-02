@@ -5,6 +5,8 @@ import java.nio.file.*;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 
+import com.local.markers.Markers;
+
 public class HunspellChecker {
     private final String dictPath;
     private final boolean available;
@@ -82,7 +84,7 @@ public class HunspellChecker {
         StringBuilder sb = new StringBuilder(text.length());
         for (int i = 0; i < text.length(); i++) {
             char c = text.charAt(i);
-            if (c == '*' || c == '~' || c == '@' || c == '$' || c == '\n') {
+            if (Markers.isPlaceholder(c) || c == '\n') {
                 sb.append(' ');
             } else {
                 sb.append(c);
@@ -148,8 +150,7 @@ public class HunspellChecker {
         if (!available || text == null || text.isBlank()) return Collections.emptyList();
 
         // Remove amanuensis placeholders and collapse newlines to spaces
-        String cleaned = text
-                .replaceAll("[*~@$]", " ")
+        String cleaned = Markers.blankPlaceholders(text)
                 .replace('\n', ' ')
                 .trim();
 

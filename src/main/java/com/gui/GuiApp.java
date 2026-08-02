@@ -3,6 +3,7 @@ package com.gui;
 import com.AppDir;
 import com.git.GitHubSession;
 import com.git.GitRepoService;
+import com.update.UpdateService;
 
 import javafx.application.Application;
 import javafx.application.Platform;
@@ -41,7 +42,59 @@ public class GuiApp extends Application {
         });
         gitScheduler.scheduleWithFixedDelay(this::autoPullIfPossible, 5, 5, TimeUnit.MINUTES);
 
+        // restos dunha actualización anterior (descarga a medias, jar xa instalado):
+        // bórranse aquí, cando xa non hai ninguén usándoos
+        UpdateService.cleanWorkDir(AppDir.base());
+        // busca de versións novas da propia app; non precisa login nin repo escrito
+        UpdateUi.start(stage);
+
         new MainView(stage).show();
+
+        // deixar a carpeta no estado correcto (clonar se está baleira, poñerse ao
+        // día e limpar restos vellos se xa hai clon). Vai despois de amosar a
+        // pantalla e nun fío aparte porque pode ter que clonar 60 MB.
+        bootstrapRepo();
+    }
+
+    /**
+     * Posta a punto da carpeta ao arrancar (ver {@link RepoBootstrap}).
+     *
+     * Se hai traballo sen subir non se avanza: ofrécese subilo co fluxo de sempre,
+     * que é o único que sabe reconciliar clave a clave. Se se clonou de cero,
+     * recárgase a pantalla inicial para que apareza a lista de ficheiros.
+     */
+    private void bootstrapRepo() {
+        Thread t = new Thread(() -> {
+            GitHubSession session = GitHubSession.getInstance();
+            RepoBootstrap.Report report = RepoBootstrap.repair(session.getToken());
+            Platform.runLater(() -> {
+                switch (report.outcome()) {
+                    case CLONED -> new MainView(stage).show();
+                    case PENDING_UPLOAD -> {
+                        if (session.isLoggedIn() && !syncPromptPending) {
+                            syncPromptPending = true;
+                            try {
+                                GitRepoService repo = new GitRepoService(AppDir.base());
+                                GitSync.confirmAndUpload(stage, repo, session,
+                                        GitSync.MSG_LOCAL_ONLY, null);
+                            } finally {
+                                syncPromptPending = false;
+                            }
+                        }
+                    }
+                    case SYNCED -> {
+                        if (!report.removed().isEmpty()) {
+                            new MainView(stage).show(); // a lista pode ter cambiado
+                        }
+                    }
+                    default -> {
+                        // NOT_A_CLONE / OFFLINE: séguese traballando co que haxa
+                    }
+                }
+            });
+        }, "repo-bootstrap");
+        t.setDaemon(true);
+        t.start();
     }
 
     // pull periódico en segundo plano. Se hai cambios locais sen subir E o remoto
@@ -67,7 +120,19 @@ public class GuiApp extends Application {
             });
             return;
         }
-        repo.pullIfSafe(session.getToken());
+        // Un pull seguro (só fast-forward). Se o local diverxe (commits sen subir +
+        // remoto avanzado), pregunta antes de reconciliar e subir, coma no caso dirty.
+        if (repo.pullIfSafe(session.getToken()) == GitRepoService.PullOutcome.DIVERGED) {
+            if (syncPromptPending) return;
+            syncPromptPending = true;
+            Platform.runLater(() -> {
+                try {
+                    GitSync.confirmAndUpload(stage, repo, session, GitSync.MSG_DIVERGED, null);
+                } finally {
+                    syncPromptPending = false;
+                }
+            });
+        }
     }
 
     // Icona da app: varios tamaños empaquetados no jar; JavaFX escolle o mellor
@@ -85,6 +150,7 @@ public class GuiApp extends Application {
     @Override
     public void stop() {
         if (gitScheduler != null) gitScheduler.shutdownNow();
+        UpdateUi.stop();
     }
 
     /** Lanzado desde com.Main. */

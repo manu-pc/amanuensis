@@ -6,7 +6,7 @@
 
     <groupId>org.example</groupId>
     <artifactId>amanuensis</artifactId>
-    <version>1.0-SNAPSHOT</version>
+    <version>1.1.0</version>
 
     <properties>
         <maven.compiler.release>21</maven.compiler.release>
@@ -22,7 +22,21 @@
             sobrescribe isto para eliminar os .so. Os .dylib (macOS) sempre fóra.
         -->
         <jar.excludeNative>**/*.dll</jar.excludeNative>
+        <!-- ruta a un strings.json real para o barrido completo de ida e volta (baleiro = usar só a mostra) -->
+        <amanuensis.corpus></amanuensis.corpus>
     </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>org.junit</groupId>
+                <artifactId>junit-bom</artifactId>
+                <version>5.11.4</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
 
     <dependencies>
         <dependency>
@@ -64,6 +78,13 @@
             <artifactId>org.eclipse.jgit</artifactId>
             <version>7.7.0.202606012155-r</version>
         </dependency>
+
+        <!-- probas do tokenizador de marcadores -->
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
@@ -72,6 +93,22 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
                 <version>3.11.0</version>
+            </plugin>
+
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>3.5.2</version>
+                <configuration>
+                    <!--
+                        Corpus completo opcional: as probas de ida e volta usan a mostra
+                        de src/test/resources por defecto; pásase -Damanuensis.corpus=/ruta/eng-4.json
+                        para barrer un ficheiro real completo.
+                    -->
+                    <systemPropertyVariables>
+                        <amanuensis.corpus>${amanuensis.corpus}</amanuensis.corpus>
+                    </systemPropertyVariables>
+                </configuration>
             </plugin>
 
             <!-- execución cómoda en desenvolvemento: mvn javafx:run -->
@@ -98,6 +135,13 @@
                             <transformers>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
                                     <mainClass>com.Main</mainClass>
+                                    <manifestEntries>
+                                        <!-- de aquí sae com.update.AppVersion.current(): é o que
+                                             compara a app co update.json para saber se hai versión
+                                             nova. Sen isto o actualizador non sabe onde está. -->
+                                        <Implementation-Title>amanuensis</Implementation-Title>
+                                        <Implementation-Version>${project.version}</Implementation-Version>
+                                    </manifestEntries>
                                 </transformer>
                             </transformers>
                             <filters>
@@ -128,8 +172,8 @@
             e xera un jar autocontido cun nome distinto, para que conviva co de Linux.
 
             Construír con:  mvn -Pwindows clean package
-            Saída:          target/amanuensis-windows-1.0-SNAPSHOT.jar
-            Execución (en Windows):  java -jar amanuensis-windows-1.0-SNAPSHOT.jar
+            Saída:          target/amanuensis-windows-1.1.0.jar
+            Execución (en Windows):  java -jar amanuensis-windows-1.1.0.jar
         -->
         <profile>
             <id>windows</id>

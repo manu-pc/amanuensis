@@ -40,6 +40,22 @@ public final class AppDir {
         return base().resolve("lang");
     }
 
+    /**
+     * O .jar en execución, ou null en desenvolvemento (onde o código vén de
+     * target/classes e non hai jar que actualizar). Úsao o actualizador
+     * automático para saber que ficheiro hai que substituír: o nome importa,
+     * porque o jar de Windows e o de Linux son distintos.
+     */
+    public static Path runningJar() {
+        try {
+            File loc = new File(AppDir.class.getProtectionDomain()
+                    .getCodeSource().getLocation().toURI());
+            return loc.isFile() ? loc.getAbsoluteFile().toPath() : null;
+        } catch (URISyntaxException | RuntimeException e) {
+            return null;
+        }
+    }
+
     private static Path cwd() {
         return Path.of(".").toAbsolutePath().normalize();
     }

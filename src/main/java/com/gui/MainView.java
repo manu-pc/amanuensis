@@ -4,6 +4,7 @@ import com.AppDir;
 import com.git.GitHubAuth;
 import com.git.GitHubSession;
 import com.git.GitRepoService;
+import com.update.AppVersion;
 
 import javafx.application.Platform;
 import javafx.collections.FXCollections;
@@ -134,9 +135,10 @@ public class MainView {
             doPull(gitRepo, langDir, langList, syncLabel, pullNow);
         }
 
+        root.getChildren().add(buildVersionBar());
         root.getChildren().add(buttons);
 
-        Scene scene = new Scene(root, 600, hasLang ? 480 : 260);
+        Scene scene = new Scene(root, 600, hasLang ? 520 : 300);
         stage.setScene(scene);
         stage.show();
         input.requestFocus();
@@ -145,6 +147,36 @@ public class MainView {
     // ---------------------------------------------------------------
     // integración con GitHub
     // ---------------------------------------------------------------
+
+    /**
+     * Versión en execución e busca manual de actualizacións. A busca automática vai
+     * por libre en segundo plano (ver {@link UpdateUi}); isto é para quen queira
+     * comprobalo no momento.
+     */
+    private HBox buildVersionBar() {
+        Label version = new Label("versión " + AppVersion.current());
+        version.setTextFill(Color.GRAY);
+
+        Label result = new Label("");
+        result.setTextFill(Color.TEAL);
+
+        Button check = new Button("buscar actualizacións");
+        check.setOnAction(e -> {
+            check.setDisable(true);
+            result.setText("comprobando…");
+            UpdateUi.checkNow(stage, () -> {
+                result.setText("xa tes a última versión");
+                check.setDisable(false);
+            });
+            // se hai actualización, o diálogo de UpdateUi toma o relevo; volvemos
+            // habilitar o botón igualmente por se se rexeita
+            check.setDisable(false);
+        });
+
+        HBox bar = new HBox(10, version, check, result);
+        bar.setAlignment(Pos.CENTER_LEFT);
+        return bar;
+    }
 
     private HBox buildGitBar() {
         Label statusLabel = new Label("");
@@ -381,10 +413,16 @@ public class MainView {
                     case UP_TO_DATE -> "actualizado (sen cambios novos)";
                     case UPDATED -> "actualizado con cambios novos";
                     case SKIPPED_DIRTY -> "hai cambios sen subir; non se actualizou";
+                    case DIVERGED -> "tes cambios locais sen subir e o servidor tamén cambiou";
                     case FAILED -> "erro ao actualizar";
                 });
                 if (outcome == GitRepoService.PullOutcome.UPDATED) {
                     rescan.run();
+                } else if (outcome == GitRepoService.PullOutcome.DIVERGED) {
+                    GitHubSession session = GitHubSession.getInstance();
+                    if (session.isLoggedIn()) {
+                        GitSync.confirmAndUpload(stage, gitRepo, session, GitSync.MSG_DIVERGED, rescan);
+                    }
                 }
             });
         }, "git-autopull").start();
