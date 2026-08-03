@@ -30,6 +30,7 @@ import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.transport.PushResult;
 import org.eclipse.jgit.transport.RefSpec;
 import org.eclipse.jgit.transport.RemoteRefUpdate;
+import org.eclipse.jgit.transport.TagOpt;
 import org.eclipse.jgit.transport.URIish;
 import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider;
 import org.eclipse.jgit.treewalk.TreeWalk;
@@ -70,6 +71,25 @@ public class GitRepoService {
      */
     public static final String DEFAULT_REMOTE =
             "https://github.com/Deltarune-en-Galego/deltarune-en-galego-DEV.git";
+
+    /**
+     * Profundidade da descarga inicial: só o último commit.
+     *
+     * <p>
+     * O historial pesa 222 MB e o texto que se traduce son 9 MB. O resto son
+     * ficheiros que xa nin están no proxecto (55 MB de .zip, 35 MB de .dll, 27 MB
+     * de .jar, 16 MB de .mp4, sprites e sons): deixar de trackealos non os quita
+     * do historial, así que cada tradutor os baixaba igual. Cun clon superficial
+     * a descarga pasa de 222 MB a 1,6 MB de git — de minutos a segundos.
+     *
+     * <p>
+     * A app nunca le o historial: {@link KeyMerge} compara HEAD, a punta remota e
+     * o ledger, e nada máis. Os fetch posteriores non levan profundidade a
+     * propósito: nun repositorio superficial traen só o novo e mantéñeno
+     * superficial, mentres que nun completo (o de quen xa o clonara antes)
+     * seguen funcionando como sempre.
+     */
+    private static final int SHALLOW_DEPTH = 1;
 
     // A app só xestiona a subcarpeta lang/. Todo o de fóra (o .jar, readme, scripts,
     // ficheiros que o usuario cree) é asunto do usuario: nunca se reporta como "sen
@@ -212,12 +232,19 @@ public class GitRepoService {
                     return;
                 }
             }
+            String branch = remoteDefaultBranch(remoteUrl, token);
             CloneCommand clone = Git.cloneRepository()
                     .setURI(remoteUrl)
                     .setDirectory(repoDir.toFile())
+                    .setDepth(SHALLOW_DEPTH)
+                    .setNoTags()
+                    .setBranch(branch)
+                    .setBranchesToClone(List.of("refs/heads/" + branch))
                     .setProgressMonitor(monitorOrNull(progress));
             withAuth(clone, token);
-            clone.call().close();
+            try (Git git = clone.call()) {
+                configureFetchOnly(git.getRepository(), branch);
+            }
         } catch (InvalidRemoteException e) {
             // «invalid remote: origin» é o que di JGit cando GitHub responde que ese
             // repositorio non existe... ou que existe pero non o podemos ver. Como é
@@ -244,12 +271,19 @@ public class GitRepoService {
         try (Git git = Git.init().setDirectory(repoDir.toFile()).call()) {
             Repository repo = git.getRepository();
             git.remoteAdd().setName("origin").setUri(new URIish(remoteUrl)).call();
+
+            // Saber a rama ANTES de baixar nada: hai que pedir esa e ningunha máis.
+            String branch = remoteDefaultBranch(git, token);
             withAuth(git.fetch(), token)
                     .setRemote("origin")
+                    .setRefSpecs(new RefSpec("+refs/heads/" + branch
+                            + ":refs/remotes/origin/" + branch))
+                    .setDepth(SHALLOW_DEPTH)
+                    .setTagOpt(TagOpt.NO_TAGS)
                     .setProgressMonitor(monitorOrNull(progress))
                     .call();
+            configureFetchOnly(repo, branch);
 
-            String branch = remoteDefaultBranch(git, token);
             ObjectId remoteTip = repo.resolve("refs/remotes/origin/" + branch);
             if (remoteTip == null) {
                 throw new IOException("non se puido atopar a rama remota orixe/" + branch);
@@ -1050,6 +1084,40 @@ public class GitRepoService {
      * refspec recrearía esa rama. Preguntamos ao remoto cal é o seu HEAD (symref)
      * en vez de fiarnos do nome local. Se non se pode determinar, cae en "main".
      */
+    /**
+     * Deixa {@code origin} seguindo <b>só</b> a rama de traballo.
+     *
+     * <p>
+     * Sen isto, cada fetch trae tamén as ramas vellas do repositorio, e iso é o que
+     * facía inútil o clon superficial: as tres ramas antigas
+     * ({@code amanuensis-conflito-*}, {@code c4trad/*}) son anteriores a quitar os
+     * sprites, os sons e os .zip, así que a súa punta —un só commit, o que pide un
+     * clon superficial— xa arrastra 224 MB cada unha. Con isto a descarga é a punta
+     * de {@code main} e nada máis.
+     */
+    private void configureFetchOnly(Repository repo, String branch) throws IOException {
+        StoredConfig cfg = repo.getConfig();
+        cfg.setString("remote", "origin", "fetch",
+                "+refs/heads/" + branch + ":refs/remotes/origin/" + branch);
+        cfg.save();
+    }
+
+    /** A rama por defecto do remoto, preguntando ao servidor antes de haber clon. */
+    private String remoteDefaultBranch(String remoteUrl, String token) {
+        try {
+            Collection<Ref> refs = withAuth(Git.lsRemoteRepository().setRemote(remoteUrl), token)
+                    .call();
+            for (Ref r : refs) {
+                if (Constants.HEAD.equals(r.getName()) && r.isSymbolic()) {
+                    return Repository.shortenRefName(r.getTarget().getName());
+                }
+            }
+        } catch (Exception ignored) {
+            // sen rede/token: caemos na rama por defecto coñecida
+        }
+        return "main";
+    }
+
     private String remoteDefaultBranch(Git git, String token) {
         try {
             Collection<Ref> refs = withAuth(git.lsRemote(), token).setRemote("origin").call();
