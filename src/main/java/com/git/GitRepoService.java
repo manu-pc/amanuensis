@@ -1,5 +1,7 @@
 package com.git;
 
+import com.glossary.Glossary;
+import com.glossary.XlsxReader;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.local.EditLedger;
@@ -258,11 +260,69 @@ public class GitRepoService {
     /** Cambios reais en ficheiros trackeados. Ignora *.copy*.json e o dicionario persoal (non trackeados). */
     public boolean hasTrackedChanges() throws IOException, GitAPIException {
         try (Git git = Git.open(repoDir.toFile())) {
-            Status status = git.status().addPath(LANG_DIR).call();
-            return !status.getModified().isEmpty()
-                    || !status.getChanged().isEmpty()
-                    || !status.getMissing().isEmpty()
-                    || !status.getRemoved().isEmpty();
+            return !trackedChanges(git).isEmpty();
+        }
+    }
+
+    /**
+     * Rutas de lang/ que difiren do índice, xa descontado o glosario cando só
+     * cambiaron os seus bytes.
+     *
+     * <p>
+     * O glosario é un .xlsx, é dicir un ZIP: LibreOffice reescribe marcas de tempo
+     * ao gardar, así que abrilo e pechalo sen tocar nada xa o deixa «modificado»
+     * para git. Sen esta comprobación, ese falso cambio faría que
+     * {@link #pullIfSafe} devolvese SKIPPED_DIRTY sempre e as actualizacións
+     * pararían en seco sen que ninguén editase nada.
+     */
+    private Set<String> trackedChanges(Git git) throws GitAPIException {
+        Status status = git.status().addPath(LANG_DIR).call();
+        Set<String> changed = new LinkedHashSet<>();
+        changed.addAll(status.getModified());
+        changed.addAll(status.getChanged());
+        changed.addAll(status.getMissing());
+        changed.addAll(status.getRemoved());
+        if (changed.remove(Glossary.REL_PATH) && fileContentChanged(git, Glossary.REL_PATH)) {
+            changed.add(Glossary.REL_PATH);
+        }
+        return changed;
+    }
+
+    /** True se o contido dun ficheiro difire do que hai en HEAD (ver {@link #contentDigest}). */
+    private boolean fileContentChanged(Git git, String relPath) {
+        try {
+            Path local = repoDir.resolve(relPath);
+            byte[] ours = Files.isRegularFile(local) ? Files.readAllBytes(local) : null;
+            byte[] head = readBlobAtHead(git.getRepository(), relPath);
+
+            if (head == null || ours == null) {
+                return head != ours; // apareceu ou desapareceu: iso si é un cambio
+            }
+            return !contentDigest(relPath, head).equals(contentDigest(relPath, ours));
+        } catch (IOException | RuntimeException e) {
+            // ante a dúbida, tratalo como cambiado: nunca dicir «non cambiou» sen sabelo
+            return true;
+        }
+    }
+
+    /**
+     * Pegada do contido dun ficheiro. Nos .xlsx compáranse as celas e non os bytes,
+     * porque gardar sen cambiar nada xa reescribe o ZIP (ver {@link XlsxReader}).
+     */
+    private static String contentDigest(String relPath, byte[] data) {
+        if (relPath.toLowerCase(java.util.Locale.ROOT).endsWith(".xlsx")) {
+            return XlsxReader.digest(data);
+        }
+        return new String(data, StandardCharsets.UTF_8);
+    }
+
+    private byte[] readBlobAtHead(Repository repo, String relPath) throws IOException {
+        ObjectId headId = repo.resolve(Constants.HEAD);
+        if (headId == null) {
+            return null;
+        }
+        try (RevWalk walk = new RevWalk(repo)) {
+            return readBlobAt(repo, walk.parseCommit(headId), relPath);
         }
     }
 
@@ -416,7 +476,35 @@ public class GitRepoService {
             // o push xa fixo o seu; se o rexistro non se puido limpar, quedará
             // pendente e volverá subir o mesmo (idempotente) na próxima tentativa.
         }
-        return outcome;
+
+        if (outcome instanceof PushOutcome.Failure) {
+            return outcome; // rede ou repositorio mal: non insistir co glosario
+        }
+
+        // O glosario non ten rexistro de edicións (é un binario, non ten claves), así
+        // que este é o único punto que o sube. Sen isto quedaría cambiado no disco para
+        // sempre: bloquearía os pull por «árbore sucia» e non subiría nunca.
+        PushOutcome glossary = commitAndPushFile(Glossary.REL_PATH,
+                "Actualizar o glosario", authorName, authorEmail, token);
+        return combine(outcome, glossary);
+    }
+
+    /** Resultado conxunto de dúas subidas: manda o peor dos dous. */
+    private static PushOutcome combine(PushOutcome a, PushOutcome b) {
+        if (a instanceof PushOutcome.Failure) return a;
+        if (b instanceof PushOutcome.Failure) return b;
+        if (a instanceof PushOutcome.Conflict ca && b instanceof PushOutcome.Conflict cb) {
+            Set<String> keys = new LinkedHashSet<>(ca.conflictKeys());
+            keys.addAll(cb.conflictKeys());
+            String prs = java.util.stream.Stream.of(ca.prUrl(), cb.prUrl())
+                    .filter(java.util.Objects::nonNull)
+                    .collect(java.util.stream.Collectors.joining("  "));
+            return new PushOutcome.Conflict(ca.lineRanges() + "; " + cb.lineRanges(),
+                    "(varias ramas)", prs.isEmpty() ? null : prs, keys);
+        }
+        if (a instanceof PushOutcome.Conflict) return a;
+        if (b instanceof PushOutcome.Conflict) return b;
+        return new PushOutcome.Success();
     }
 
     /** Ficheiros trackeados de lang/ con cambios que NON teñen edicións rexistradas. */
@@ -427,6 +515,9 @@ public class GitRepoService {
             dirty.addAll(st.getModified());
             dirty.addAll(st.getChanged());
             dirty.removeAll(ledgerPaths);
+            // o glosario nunca ten rexistro (é binario): sae por commitAndPushFile e
+            // non pode acabar nunha lista pensada para descartar cambios locais
+            dirty.remove(Glossary.REL_PATH);
             return new ArrayList<>(dirty);
         }
     }
@@ -568,6 +659,109 @@ public class GitRepoService {
                 writeJson(repoDir.resolve(relPath), merged);
                 git.add().addFilepattern(relPath).call();
                 git.commit().setOnly(relPath).setAuthor(author).setCommitter(author).setMessage(fullMessage).call();
+
+                if (tryPush(git, token)) {
+                    return new PushOutcome.Success();
+                }
+                return new PushOutcome.Failure("outra persoa subiu cambios xusto agora; téntao de novo");
+            }
+        } catch (Exception e) {
+            return new PushOutcome.Failure(e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
+        } finally {
+            GIT_LOCK.unlock();
+        }
+    }
+
+    /**
+     * Commit + push dun ficheiro <b>enteiro</b>, sen mesturar por claves.
+     *
+     * <p>
+     * Para o glosario non hai outra: é un .xlsx, un binario sen claves que
+     * comparar, así que {@link KeyMerge} non se pode aplicar. O modelo é «gaña quen
+     * garda de último», cunha condición: só se sobrescribe o do servidor se o
+     * servidor <b>non tocou</b> ese ficheiro desde a nosa base. Se o tocou,
+     * ninguén perde nada en silencio — o noso vai a unha rama con PR, igual ca nos
+     * conflitos de clave, e a copia local pasa a ser a do servidor.
+     *
+     * <p>
+     * É suficiente porque o glosario edítase moi de cando en vez (tres commits en
+     * toda a súa historia): o caso de dúas persoas gardándoo á vez é raro, e cando
+     * pase queda para revisar a man en vez de resolverse mal.
+     */
+    public PushOutcome commitAndPushFile(String relPath, String subject,
+            String authorName, String authorEmail, String token) {
+        String fullMessage = subject + "\n\nFeito dende amanuensis";
+        PersonIdent author = new PersonIdent(authorName, authorEmail);
+
+        GIT_LOCK.lock();
+        try (Git git = Git.open(repoDir.toFile())) {
+            Repository repo = git.getRepository();
+            Path local = repoDir.resolve(relPath);
+
+            if (!Files.isRegularFile(local) || !fileContentChanged(git, relPath)) {
+                return new PushOutcome.Success(); // nada que subir
+            }
+
+            // A nosa copia, gardada antes de calquera reset: resetLangTo tamén
+            // actualiza este ficheiro no disco, porque agora vive dentro de lang/.
+            byte[] ours = Files.readAllBytes(local);
+            byte[] head = readBlobAtHead(repo, relPath);
+            String baseDigest = head == null ? "" : contentDigest(relPath, head);
+
+            git.add().addFilepattern(relPath).call();
+            RevCommit ourCommit = git.commit()
+                    .setOnly(relPath)
+                    .setAuthor(author).setCommitter(author)
+                    .setMessage(fullMessage)
+                    .call();
+
+            if (tryPush(git, token)) {
+                return new PushOutcome.Success();
+            }
+
+            String remoteBranch = remoteDefaultBranch(git, token);
+            withAuth(git.fetch(), token).call();
+            ObjectId theirsId = repo.resolve("refs/remotes/origin/" + remoteBranch);
+            if (theirsId == null) {
+                return new PushOutcome.Failure("non se puido atopar a rama remota orixe/" + remoteBranch);
+            }
+
+            try (RevWalk walk = new RevWalk(repo)) {
+                byte[] theirs = readBlobAt(repo, walk.parseCommit(theirsId), relPath);
+                String theirsDigest = theirs == null ? "" : contentDigest(relPath, theirs);
+
+                // xa está subido o mesmo contido (alguén cos mesmos cambios): listo
+                if (theirsDigest.equals(contentDigest(relPath, ours))) {
+                    resetLangTo(git, theirsId);
+                    return new PushOutcome.Success();
+                }
+
+                if (!theirsDigest.equals(baseDigest)) {
+                    String branch = "amanuensis-conflito-" + safeBranchToken(authorName)
+                            + "-" + (System.currentTimeMillis() / 1000);
+                    pushCommitToBranch(git, ourCommit, branch, token);
+                    resetLangTo(git, theirsId);
+
+                    String prUrl = null;
+                    GitHubApi.Repo ghRepo = GitHubApi.parseRepo(
+                            repo.getConfig().getString("remote", "origin", "url"));
+                    if (ghRepo != null) {
+                        String prTitle = "Conflito no glosario (" + relPath + ")";
+                        String prBody = "Dúas persoas gardaron «" + relPath + "» á vez.\n\n"
+                                + "Como é un libro de cálculo non se pode fusionar automaticamente, "
+                                + "así que esta rama garda unha das dúas versións para revisala e "
+                                + "pasar a man o que falte.\n\nFeito dende amanuensis.";
+                        prUrl = GitHubApi.createPullRequest(token, ghRepo, branch, remoteBranch, prTitle, prBody);
+                    }
+                    return new PushOutcome.Conflict(relPath, branch, prUrl, Set.of());
+                }
+
+                // o remoto non tocou este ficheiro: repetir o noso cambio na súa punta
+                resetLangTo(git, theirsId);
+                Files.write(local, ours);
+                git.add().addFilepattern(relPath).call();
+                git.commit().setOnly(relPath).setAuthor(author).setCommitter(author)
+                        .setMessage(fullMessage).call();
 
                 if (tryPush(git, token)) {
                     return new PushOutcome.Success();
@@ -804,12 +998,17 @@ public class GitRepoService {
     }
 
     private JsonObject readJsonAt(Repository repo, RevCommit commit, String relPath) throws IOException {
+        byte[] blob = readBlobAt(repo, commit, relPath);
+        if (blob == null) return new JsonObject();
+        return JsonParser.parseString(new String(blob, StandardCharsets.UTF_8)).getAsJsonObject();
+    }
+
+    /** Contido en bruto dun ficheiro nun commit, ou null se alí non existe. */
+    private byte[] readBlobAt(Repository repo, RevCommit commit, String relPath) throws IOException {
         try (TreeWalk tw = TreeWalk.forPath(repo, relPath, commit.getTree())) {
-            if (tw == null) return new JsonObject();
-            ObjectId blobId = tw.getObjectId(0);
-            ObjectLoader loader = repo.open(blobId);
-            String text = new String(loader.getBytes(), StandardCharsets.UTF_8);
-            return JsonParser.parseString(text).getAsJsonObject();
+            if (tw == null) return null;
+            ObjectLoader loader = repo.open(tw.getObjectId(0));
+            return loader.getBytes();
         }
     }
 

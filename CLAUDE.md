@@ -92,6 +92,16 @@ Propagation is **overwrite-everything** by project decision: `TranslationStore.s
 
 `PropagateChapters` (`scripts/propagate-chapters.sh`) is the bulk version. Per group it takes the earliest occurrence **that is already translated** (value ≠ group `base`) — taking chapter 1 literally would revert to English everything translated in later chapters but not in ch1, which is exactly the half-finished state. `--forzar-primeira` overrides that. Dry run by default; `--aplicar` writes.
 
+**Shared glossary** (`com.glossary`) — `lang/glosario.xlsx`, the agreed names for characters, items and terms. Edited **outside** Amanuensis in LibreOffice/Excel; the app only distributes it and opens it (`Glossary.open()` → AWT `Desktop`, falling back to `xdg-open`/`open`/`rundll32`). `LocalView` has a "glosario" button.
+
+Deliberately **not** converted to JSON: the sheet is not a regular table (chapters 2–3 are wide blocks of paired English/Galician columns repeated across A–P), so a schema would destroy the layout people actually work in.
+
+It lives in `lang/` for one specific reason: `resetLangTo` only checks out `lang/`, so at the repo root the file reached translators **once, at clone time, and never updated again**. Inside `lang/` it rides the normal pull. It doesn't pollute the editable-file list because `MainView` only lists `.json`.
+
+`XlsxReader` is a minimal xlsx reader (zip + `javax.xml` DOM, no Apache POI — that would add ~10MB to a 13MB fat-jar; the real cost was ~13KB). It exists for change detection: **an xlsx is a zip, so LibreOffice rewrites timestamps and `docProps` on every save** — opening the glossary and closing it untouched already produces different bytes. Comparing bytes would leave the file permanently "modified", making `hasTrackedChanges()` always true and **silently stopping every pull**. So `GitRepoService.contentDigest` compares *cell contents* (sheet names + non-empty cells, sorted, sha256) for `.xlsx`. An unreadable file falls back to the sha256 of its raw bytes — never "unchanged" when unknown. The parser disallows DOCTYPE/external entities.
+
+Sync is whole-file, not `KeyMerge` — a binary has no keys. `commitAndPushFile` is last-writer-wins **with one guard**: it only overwrites the server if the server hasn't touched that file since our base; if it has, our commit goes to the usual `amanuensis-conflito-*` branch + PR and the local copy becomes the server's. Adequate because the glossary is edited rarely (3 commits in its entire history). `commitAndPushAllDirty` calls it after the ledger push — that is the **only** thing that uploads the glossary, since it has no `EditLedger`; without it a local edit would sit dirty forever, blocking pulls and never uploading. It's also excluded from `dirtyFilesWithoutLedger` so it can never reach a discard path.
+
 **Marker system** (`com.local.markers`) — Undertale/Deltarune strings contain formatting codes. The package is pure (no JavaFX, no IO) and fully unit-tested; `LocHelper` is just the JSON-backed line store that delegates to it and caches one token list per line (the editor reapplies formatting on every keystroke).
 
 `MarkerTokenizer.tokenize()` classifies into 6 token types:
@@ -134,12 +144,16 @@ update.json                # published app version + jar sha256/URLs (repo root,
 .amanuensis-update/        # staged download + applier.log (untracked, app-managed)
 lang/
   settings.json              # project metadata (lang name, URLs, etc.)
+  glosario.xlsx              # shared glossary — edited in LibreOffice, NOT in the editor
   amanuensis-personal.dic    # user's personal spell-check word list
   chapter1/
     chapter_settings.json    # chapter metadata — NOT opened in editor
     strings.json             # translatable strings — opened in editor
+    sprites/ sounds/ vid/    # localized game assets — on disk, NOT tracked
   ...
-  fonts/                     # game fonts (not edited)
+  fonts/                     # game fonts (on disk, NOT tracked)
 ```
 
 The `lang/` directory must be next to the jar at runtime. `MainView` lists all `.json` files under `lang/` recursively, excluding `*.copy*.json` and `chapter_settings.json`.
+
+**Only the translation JSON (plus the glossary and docs) is tracked.** `.gitignore` has always excluded `*.png`/`*.ogg`/`*.mp4`/`*.ttf`, but 698 such files had been added before that rule and stayed in the index — which is why chapter 5's assets were untracked while chapters 1–4's were not. They were untracked (`git rm --cached`, files kept on disk); history still holds the blobs, so the clone is still ~222MB. **Anyone assembling a release must supply the sprites/sounds/fonts from outside the repo** — fonts especially, since the game needs them to render accented Galician glyphs.

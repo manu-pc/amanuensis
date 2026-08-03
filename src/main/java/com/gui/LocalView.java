@@ -4,6 +4,7 @@ import com.AppDir;
 import com.git.GitHubSession;
 import com.git.GitRepoService;
 import com.git.KeyMerge;
+import com.glossary.Glossary;
 import com.google.gson.JsonObject;
 import com.local.EditLedger;
 import com.local.HunspellChecker;
@@ -364,6 +365,8 @@ public class LocalView {
         viewChanges.setOnAction(e -> doPullChanges());
         Button dumpTxt = new Button("exportar .txt");
         dumpTxt.setOnAction(e -> doDumpToTxt());
+        Button glossaryBtn = new Button("glosario");
+        glossaryBtn.setOnAction(e -> doOpenGlossary());
 
         CheckBox autoAdvanceCheck = new CheckBox("auto-avanzar");
         autoAdvanceCheck.setSelected(autoAdvance);
@@ -381,10 +384,35 @@ public class LocalView {
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
 
-        HBox bar = new HBox(8, save, pushBtn, viewChanges, dumpTxt,
+        HBox bar = new HBox(8, save, pushBtn, viewChanges, dumpTxt, glossaryBtn,
                 autoAdvanceCheck, spellOnEnterCheck, spacer, close);
         bar.setAlignment(Pos.CENTER_LEFT);
         return bar;
+    }
+
+    /**
+     * Abre o glosario na folla de cálculo do sistema. Vai nun fío aparte porque
+     * lanzar LibreOffice tarda o seu e bloquearía a interface.
+     */
+    private void doOpenGlossary() {
+        statusLabel.setText("abrindo o glosario…");
+        statusLabel.setTextFill(Color.TEAL);
+        Thread t = new Thread(() -> {
+            try {
+                Glossary.open();
+                Platform.runLater(() -> {
+                    statusLabel.setText("glosario aberto; ao gardalo subirase co resto");
+                    statusLabel.setTextFill(Color.SEAGREEN);
+                });
+            } catch (IOException ex) {
+                Platform.runLater(() -> {
+                    statusLabel.setText("non se puido abrir o glosario: " + ex.getMessage());
+                    statusLabel.setTextFill(Color.FIREBRICK);
+                });
+            }
+        }, "abrir-glosario");
+        t.setDaemon(true);
+        t.start();
     }
 
     private static Label title(String text) {
