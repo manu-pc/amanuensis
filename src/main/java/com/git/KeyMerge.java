@@ -1,8 +1,10 @@
 package com.git;
 
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 import com.google.gson.JsonObject;
 import com.local.JsonIo;
@@ -52,27 +54,51 @@ public final class KeyMerge {
         return out;
     }
 
+    /** Igual que a versión de catro argumentos, ignorando as claves desaparecidas. */
+    public static JsonObject reconcile(JsonObject theirs, Map<String, KeyEdit> edits,
+            Map<String, String> conflictsOut) {
+        return reconcile(theirs, edits, conflictsOut, new LinkedHashSet<>());
+    }
+
     /**
      * Mestura as nosas edicións co estado do servidor, recorrendo <b>só</b> as
      * claves editadas:
      *
      * <ul>
+     * <li>a clave xa non existe no servidor → edición obsoleta, non conflito</li>
      * <li>o servidor segue na nosa base → aplícase o noso valor</li>
      * <li>o servidor xa ten o noso valor → nada que facer</li>
      * <li>calquera outra cousa → conflito desa clave (ninguén gaña en silencio)</li>
      * </ul>
      *
+     * <p>
+     * A primeira regra distingue dúas cousas que antes se confundían. Cando o xogo
+     * se recompila, hai claves que desaparecen (a reestruturación do capítulo 5
+     * borrou 77 das de capítulos 1-4). Se unha desas estaba no rexistro de alguén,
+     * trataríase coma un conflito: abríase unha rama e unha PR dicíndolle que «outra
+     * persoa editou esa liña á vez», cando non a editou ninguén — simplemente deixou
+     * de existir. E esa PR non se pode fusionar, porque reviviría unha clave
+     * eliminada a mantenta. Segue sen recrearse a clave; o que cambia é que se
+     * informa do que pasou de verdade.
+     *
      * @param conflictsOut énchese con clave → o noso valor, para a rama de conflito
+     * @param droppedOut   énchese coas claves que xa non existen no servidor
      * @return o contido a subir (parte do do servidor)
      */
     public static JsonObject reconcile(JsonObject theirs, Map<String, KeyEdit> edits,
-            Map<String, String> conflictsOut) {
+            Map<String, String> conflictsOut, Set<String> droppedOut) {
         JsonObject merged = theirs.deepCopy();
         for (Map.Entry<String, KeyEdit> e : edits.entrySet()) {
             String key = e.getKey();
             KeyEdit edit = e.getValue();
-            String theirsVal = JsonIo.stringOrNull(theirs, key);
 
+            if (!theirs.has(key)) {
+                // a liña xa non está no xogo: a edición quedou obsoleta
+                droppedOut.add(key);
+                continue;
+            }
+
+            String theirsVal = JsonIo.stringOrNull(theirs, key);
             if (Objects.equals(theirsVal, edit.value())) {
                 continue; // mesmo texto nos dous lados
             }

@@ -426,6 +426,7 @@ public class GitRepoService {
         List<String> conflicts = new ArrayList<>();
         List<String> prUrls = new ArrayList<>();
         Set<String> conflictKeys = new LinkedHashSet<>();
+        Set<String> droppedKeys = new LinkedHashSet<>();
         for (Map.Entry<String, Map<String, KeyMerge.KeyEdit>> e : editsByFile.entrySet()) {
             if (e.getValue().isEmpty()) {
                 continue;
@@ -433,6 +434,9 @@ public class GitRepoService {
             PushOutcome o = commitAndPushKeys(Path.of(e.getKey()), e.getValue(),
                     subject, authorName, authorEmail, token);
             if (o instanceof PushOutcome.Failure f) return f;
+            if (o instanceof PushOutcome.Obsolete ob) {
+                droppedKeys.addAll(ob.droppedKeys());
+            }
             if (o instanceof PushOutcome.Conflict c) {
                 conflicts.add(e.getKey() + " (" + c.lineRanges() + ")");
                 conflictKeys.addAll(c.conflictKeys());
@@ -440,8 +444,12 @@ public class GitRepoService {
             }
         }
         if (!conflicts.isEmpty()) {
+            conflictKeys.addAll(droppedKeys); // tamén hai que sacalas do rexistro
             return new PushOutcome.Conflict(String.join("; ", conflicts), "(varias ramas)",
                     prUrls.isEmpty() ? null : String.join("  ", prUrls), conflictKeys);
+        }
+        if (!droppedKeys.isEmpty()) {
+            return new PushOutcome.Obsolete(droppedKeys);
         }
         return new PushOutcome.Success();
     }
@@ -462,7 +470,9 @@ public class GitRepoService {
 
         PushOutcome outcome = commitAndPushAllLedgers(editsByFile, subject, authorName, authorEmail, token);
         try {
-            if (outcome instanceof PushOutcome.Success) {
+            if (outcome instanceof PushOutcome.Success || outcome instanceof PushOutcome.Obsolete) {
+                // Obsolete tamén subiu todo o subible; as claves que xa non existen
+                // non se poden reintentar, así que non teñen por que quedar pendentes.
                 for (EditLedger ledger : ledgers.values()) {
                     ledger.clear();
                 }
@@ -493,6 +503,11 @@ public class GitRepoService {
     private static PushOutcome combine(PushOutcome a, PushOutcome b) {
         if (a instanceof PushOutcome.Failure) return a;
         if (b instanceof PushOutcome.Failure) return b;
+        if (a instanceof PushOutcome.Obsolete oa && b instanceof PushOutcome.Obsolete ob) {
+            Set<String> all = new LinkedHashSet<>(oa.droppedKeys());
+            all.addAll(ob.droppedKeys());
+            return new PushOutcome.Obsolete(all);
+        }
         if (a instanceof PushOutcome.Conflict ca && b instanceof PushOutcome.Conflict cb) {
             Set<String> keys = new LinkedHashSet<>(ca.conflictKeys());
             keys.addAll(cb.conflictKeys());
@@ -504,6 +519,8 @@ public class GitRepoService {
         }
         if (a instanceof PushOutcome.Conflict) return a;
         if (b instanceof PushOutcome.Conflict) return b;
+        if (a instanceof PushOutcome.Obsolete) return a;
+        if (b instanceof PushOutcome.Obsolete) return b;
         return new PushOutcome.Success();
     }
 
@@ -557,6 +574,14 @@ public class GitRepoService {
                 Set<String> conflictKeys) implements PushOutcome {
         }
 
+        /**
+         * Subiuse todo, pero algunhas edicións referían a liñas que xa non existen
+         * no xogo (ver {@link KeyMerge#reconcile}). Non é un erro nin un conflito:
+         * hai que borralas do rexistro e dicilo, non abrir unha rama.
+         */
+        record Obsolete(Set<String> droppedKeys) implements PushOutcome {
+        }
+
         record Failure(String reason) implements PushOutcome {
         }
     }
@@ -589,22 +614,27 @@ public class GitRepoService {
             // Normalizar a árbore de traballo a «HEAD + as miñas edicións» antes de
             // preparar o commit: o resto do ficheiro queda coma no repositorio.
             ObjectId headId = repo.resolve(Constants.HEAD);
+            Set<String> droppedAtHead = new LinkedHashSet<>();
             try (RevWalk walk = new RevWalk(repo)) {
                 JsonObject head = headId != null
                         ? readJsonAt(repo, walk.parseCommit(headId), relPath)
                         : readWorkingTreeJson(relPath);
+                // Edicións sobre liñas que xa non existen: buildCommitContent xa as
+                // ignora, pero hai que saber cales para poder dicilo en vez de que
+                // desaparezan detrás dun «subido correctamente».
+                edits.keySet().stream().filter(k -> !head.has(k)).forEach(droppedAtHead::add);
                 writeJson(repoDir.resolve(relPath), KeyMerge.buildCommitContent(head, edits));
             }
 
-            git.add().addFilepattern(relPath).call();
-            RevCommit ourCommit = git.commit()
-                    .setOnly(relPath)
-                    .setAuthor(author).setCommitter(author)
-                    .setMessage(fullMessage)
-                    .call();
+            // Pode non quedar nada que confirmar: se todas as edicións eran sobre
+            // claves que xa non existen, o contido resultante é idéntico a HEAD e
+            // JGit rexeita o commit baleiro con «No changes».
+            RevCommit ourCommit = commitIfChanged(git, relPath, author, fullMessage);
 
             if (tryPush(git, token)) {
-                return new PushOutcome.Success();
+                return droppedAtHead.isEmpty()
+                        ? new PushOutcome.Success()
+                        : new PushOutcome.Obsolete(droppedAtHead);
             }
 
             // Rexeitado: o remoto avanzou. Traer os cambios e reconciliar a nivel de clave JSON.
@@ -624,12 +654,18 @@ public class GitRepoService {
                 JsonObject theirsJson = readJsonAt(repo, theirsCommit, relPath);
 
                 Map<String, String> conflictingKeys = new LinkedHashMap<>();
-                JsonObject merged = KeyMerge.reconcile(theirsJson, edits, conflictingKeys);
+                Set<String> droppedKeys = new LinkedHashSet<>();
+                JsonObject merged = KeyMerge.reconcile(theirsJson, edits, conflictingKeys, droppedKeys);
 
                 if (!conflictingKeys.isEmpty()) {
                     String branch = "amanuensis-conflito-" + safeBranchToken(authorName)
                             + "-" + (System.currentTimeMillis() / 1000);
-                    pushCommitToBranch(git, ourCommit, branch, token);
+                    // se non houbo commit noso (o texto xa coincidía con HEAD), o que
+                    // hai que preservar na rama é o propio HEAD
+                    RevCommit toPreserve = ourCommit != null
+                            ? ourCommit
+                            : walk.parseCommit(repo.resolve(Constants.HEAD));
+                    pushCommitToBranch(git, toPreserve, branch, token);
                     resetLangTo(git, theirsId);
 
                     // Números de liña só para a mensaxe: son posicionais, e por iso non se
@@ -649,19 +685,29 @@ public class GitRepoService {
                                 + "sen perder nada.\n\nFeito dende amanuensis.";
                         prUrl = GitHubApi.createPullRequest(token, ghRepo, branch, remoteBranch, prTitle, prBody);
                     }
-                    return new PushOutcome.Conflict(ranges, branch, prUrl,
-                            new LinkedHashSet<>(conflictingKeys.keySet()));
+                    // as obsoletas tamén hai que sacalas do rexistro: non teñen arranxo
+                    Set<String> toClear = new LinkedHashSet<>(conflictingKeys.keySet());
+                    toClear.addAll(droppedKeys);
+                    return new PushOutcome.Conflict(ranges, branch, prUrl, toClear);
                 }
 
                 // Sen conflito real: reconstruír o noso cambio enriba da punta remota actual
                 // (historial lineal en vez dun commit de fusión).
                 resetLangTo(git, theirsId);
                 writeJson(repoDir.resolve(relPath), merged);
-                git.add().addFilepattern(relPath).call();
-                git.commit().setOnly(relPath).setAuthor(author).setCommitter(author).setMessage(fullMessage).call();
+
+                // Se todas as nosas edicións eran obsoletas, «merged» é exactamente o
+                // do servidor: xa estamos ao día e non hai nada que subir.
+                if (commitIfChanged(git, relPath, author, fullMessage) == null) {
+                    return droppedKeys.isEmpty()
+                            ? new PushOutcome.Success()
+                            : new PushOutcome.Obsolete(droppedKeys);
+                }
 
                 if (tryPush(git, token)) {
-                    return new PushOutcome.Success();
+                    return droppedKeys.isEmpty()
+                            ? new PushOutcome.Success()
+                            : new PushOutcome.Obsolete(droppedKeys);
                 }
                 return new PushOutcome.Failure("outra persoa subiu cambios xusto agora; téntao de novo");
             }
@@ -974,6 +1020,31 @@ public class GitRepoService {
             // sen rede/token: caemos na rama por defecto coñecida
         }
         return "main";
+    }
+
+    /**
+     * Prepara e confirma un ficheiro, ou devolve null se non hai nada que confirmar.
+     *
+     * <p>
+     * JGit lanza «No changes» ante un commit baleiro, e iso pasa de verdade: se
+     * todas as edicións do rexistro eran sobre claves que xa non existen, o contido
+     * calculado é idéntico a HEAD. Antes iso saía como {@code Failure}, o rexistro
+     * non se limpaba e a app reintentaba a mesma subida imposible unha e outra vez.
+     */
+    private RevCommit commitIfChanged(Git git, String relPath, PersonIdent author, String message)
+            throws GitAPIException {
+        git.add().addFilepattern(relPath).call();
+        Status st = git.status().addPath(relPath).call();
+        boolean staged = !st.getAdded().isEmpty() || !st.getChanged().isEmpty()
+                || !st.getRemoved().isEmpty();
+        if (!staged) {
+            return null;
+        }
+        return git.commit()
+                .setOnly(relPath)
+                .setAuthor(author).setCommitter(author)
+                .setMessage(message)
+                .call();
     }
 
     private boolean tryPush(Git git, String token) throws GitAPIException {

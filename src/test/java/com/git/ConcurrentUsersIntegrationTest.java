@@ -159,6 +159,59 @@ class ConcurrentUsersIntegrationTest {
         assertEquals("Mundo", JsonIo.stringOrNull(finalRemote, "key2"));
     }
 
+    /**
+     * Reestruturación: alguén recompila o xogo e unha clave desaparece do ficheiro
+     * mentres outra persoa tiña unha edición pendente sobre ela. Non debe abrirse
+     * unha rama de conflito — non hai con quen entrar en conflito, a liña
+     * simplemente deixou de existir — e a edición non pode quedar no rexistro
+     * intentándose para sempre.
+     */
+    @Test
+    void anEditOnAKeyThatDisappearedUpstreamIsReportedAsObsoleteWithoutAConflictBranch() throws Exception {
+        String remoteUri = createRemoteWithSeedCommit();
+
+        Path userDir = tmp.resolve("user");
+        GitRepoService repo = new GitRepoService(userDir);
+        repo.cloneRepo(remoteUri, null);
+
+        Path file = userDir.resolve(REL_FILE);
+        LocHelper lh = new LocHelper(file.toString());
+        EditLedger ledger = EditLedger.openFor(file, userDir);
+        TranslationStore store = new TranslationStore(lh, file, ledger);
+        assertTrue(store.save(lineIndexOfKey(lh, "key2"), "Mundo"));
+
+        // mentres tanto, key2 desaparece do repositorio
+        Path other = tmp.resolve("restructurer");
+        GitRepoService restructurer = new GitRepoService(other);
+        restructurer.cloneRepo(remoteUri, null);
+        try (Git g = Git.open(other.toFile())) {
+            JsonObject rebuilt = new JsonObject();
+            rebuilt.addProperty("key1", "Hello");
+            JsonIo.writeAtomic(other.resolve(REL_FILE), rebuilt);
+            g.add().addFilepattern(REL_FILE).call();
+            g.commit().setMessage("recompilación: key2 xa non existe").call();
+            g.push().setRemote("origin").setRefSpecs(new RefSpec("main:refs/heads/main")).call();
+        }
+
+        GitRepoService.PushOutcome out = repo.commitAndPushAllDirty(
+                "traducion", "User One", "u1@example.com", null);
+
+        GitRepoService.PushOutcome.Obsolete obsolete = assertInstanceOf(
+                GitRepoService.PushOutcome.Obsolete.class, out,
+                "unha clave que xa non existe non é un conflito con ninguén");
+        assertEquals(java.util.Set.of("key2"), obsolete.droppedKeys());
+
+        // nada de ramas de conflito nin propostas de fusión espurias
+        try (Git bare = Git.open(Path.of(java.net.URI.create(remoteUri)).toFile())) {
+            assertTrue(bare.branchList().call().stream()
+                    .noneMatch(r -> r.getName().contains("amanuensis-conflito")),
+                    "non se debe abrir ningunha rama de conflito");
+        }
+        // e a edición non queda dando voltas no rexistro
+        assertTrue(EditLedger.openFor(file, userDir).entries().isEmpty(),
+                "a edición obsoleta non pode quedar pendente para sempre");
+    }
+
     @Test
     void sameKeyEditedByBothUsersGoesToConflictInsteadOfSilentlyOverwriting() throws Exception {
         String remoteUri = createRemoteWithSeedCommit();

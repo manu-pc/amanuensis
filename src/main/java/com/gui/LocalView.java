@@ -999,6 +999,17 @@ public class LocalView {
                 store.ledger().remove(pushedKeys);
                 status("subido a GitHub correctamente", Color.SEAGREEN);
                 reloadInPlace(currentIndex);
+            } else if (outcome instanceof GitRepoService.PushOutcome.Obsolete o) {
+                // Non é un conflito: ninguén editou esas liñas á vez, é que xa non
+                // existen no xogo (unha recompilación pode eliminar claves). Non hai
+                // nada que resolver, así que nin rama nin proposta de fusión.
+                store.ledger().remove(pushedKeys);
+                int n = o.droppedKeys().size();
+                status("subido correctamente, pero " + n + (n == 1
+                        ? " liña que editaras xa non existe nesta versión do xogo e descartouse"
+                        : " liñas que editaras xa non existen nesta versión do xogo e descartáronse"),
+                        Color.DARKORANGE);
+                reloadInPlace(currentIndex);
             } else if (outcome instanceof GitRepoService.PushOutcome.Conflict c) {
                 // As nosas versións quedaron na rama de conflito (e na PR), e a árbore
                 // local volveu ao estado do servidor: sacar esas claves do rexistro,
@@ -1151,6 +1162,11 @@ public class LocalView {
     private void applyAllDirtyPushOutcome(GitRepoService.PushOutcome outcome) {
         if (outcome instanceof GitRepoService.PushOutcome.Success) {
             status("subido a GitHub correctamente", Color.SEAGREEN);
+            reloadInPlace(currentIndex);
+        } else if (outcome instanceof GitRepoService.PushOutcome.Obsolete o) {
+            int n = o.droppedKeys().size();
+            status("subido correctamente; " + n + (n == 1 ? " liña editada xa non existe" : " liñas editadas xa non existen")
+                    + " nesta versión do xogo e descartáronse", Color.DARKORANGE);
             reloadInPlace(currentIndex);
         } else if (outcome instanceof GitRepoService.PushOutcome.Conflict c) {
             String base = "ocorreu un problema, outro usuario editou as liñas (" + c.lineRanges()

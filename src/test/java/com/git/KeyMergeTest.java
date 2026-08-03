@@ -5,7 +5,9 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.Map;
+import java.util.Set;
 
 import org.junit.jupiter.api.Test;
 
@@ -103,13 +105,38 @@ class KeyMergeTest {
         assertEquals("texto", JsonIo.stringOrNull(merged, "nova-do-servidor"));
     }
 
+    /**
+     * Unha clave que o servidor eliminou non se recrea nunca. O que cambiou é como
+     * se informa: antes contaba como conflito, e o usuario recibía unha rama e unha
+     * proposta de fusión dicindo que «outra persoa editou esa liña á vez». Non a
+     * editou ninguén: deixou de existir ao recompilar o xogo (a reestruturación do
+     * capítulo 5 borrou 77 claves dos capítulos 1-4). E esa proposta non se podía
+     * fusionar, porque reviviría unha clave eliminada a mantenta.
+     */
     @Test
-    void editOfAKeyRemovedUpstreamIsAConflictNotAResurrection() {
+    void editOfAKeyRemovedUpstreamIsReportedAsObsoleteNotAsAConflict() {
         Map<String, String> conflicts = new LinkedHashMap<>();
-        JsonObject merged = KeyMerge.reconcile(json("outra", "x"), edits("k", "base", "meu"), conflicts);
+        Set<String> dropped = new LinkedHashSet<>();
+        JsonObject merged = KeyMerge.reconcile(json("outra", "x"), edits("k", "base", "meu"),
+                conflicts, dropped);
 
-        assertEquals(Map.of("k", "meu"), conflicts);
-        assertFalse(merged.has("k"), "non se recrea unha clave que o servidor eliminou");
+        assertTrue(conflicts.isEmpty(), "non hai ninguén co que entrar en conflito");
+        assertEquals(Set.of("k"), dropped);
+        assertFalse(merged.has("k"), "e segue sen recrearse a clave eliminada");
+    }
+
+    @Test
+    void aRealConflictIsStillAConflictWhenThereAreAlsoObsoleteKeys() {
+        Map<String, String> conflicts = new LinkedHashMap<>();
+        Set<String> dropped = new LinkedHashSet<>();
+        Map<String, KeyMerge.KeyEdit> both = new LinkedHashMap<>();
+        both.put("viva", new KeyMerge.KeyEdit("base", "meu"));
+        both.put("morta", new KeyMerge.KeyEdit("base", "meu"));
+
+        KeyMerge.reconcile(json("viva", "dela"), both, conflicts, dropped);
+
+        assertEquals(Map.of("viva", "meu"), conflicts, "a clave que segue viva si é conflito");
+        assertEquals(Set.of("morta"), dropped);
     }
 
     @Test

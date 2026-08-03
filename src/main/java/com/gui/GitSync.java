@@ -85,6 +85,11 @@ final class GitSync {
     private static void showOutcome(Stage owner, GitRepoService.PushOutcome outcome) {
         if (outcome instanceof GitRepoService.PushOutcome.Success) {
             info(owner, "Os teus cambios subíronse correctamente.");
+        } else if (outcome instanceof GitRepoService.PushOutcome.Obsolete o) {
+            int n = o.droppedKeys().size();
+            info(owner, "Os teus cambios subíronse correctamente.\n\n"
+                    + (n == 1 ? "Unha liña que editaras xa non existe" : n + " liñas que editaras xa non existen")
+                    + " nesta versión do xogo, así que se descartaron.");
         } else if (outcome instanceof GitRepoService.PushOutcome.Conflict c) {
             String msg = "Algúns cambios entraron en conflito con edicións recentes (" + c.lineRanges()
                     + "). Gardáronse nunha proposta de fusión e non se perderon.";
