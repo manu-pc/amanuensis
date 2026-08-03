@@ -8,6 +8,7 @@ import com.local.EditLedger;
 import com.local.JsonIo;
 import com.local.LedgerStore;
 
+import org.eclipse.jgit.api.CheckoutCommand;
 import org.eclipse.jgit.api.CloneCommand;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.ResetCommand;
@@ -183,20 +184,20 @@ public class GitRepoService {
             throws GitAPIException, IOException {
         GIT_LOCK.lock();
         try {
-            if (Files.exists(repoDir) && !isCloned()) {
+            if (Files.exists(repoDir)) {
                 boolean nonEmpty;
                 try (var stream = Files.list(repoDir)) {
                     nonEmpty = stream.findAny().isPresent();
                 }
                 if (nonEmpty) {
-                    // A carpeta xa ten ficheiros pero sen .git: caso típico de descargar
-                    // o repo como .zip de GitHub. NON se pode mover/renomear a carpeta
-                    // (o propio .jar execútase dende dentro e Windows bloquéao -> "outro
-                    // proceso está a usar este ficheiro"). Nin sequera se pode sobrescribir
-                    // a árbore de traballo, porque o .jar en execución está trackeado no
-                    // repo. Solución: inicializar o git in situ e apuntar a HEAD á punta
-                    // remota cun reset "mixed" (só o índice; a árbore de traballo, que xa
-                    // coincide co commit do .zip, queda intacta e o .jar non se toca).
+                    // A carpeta xa ten algo dentro: o caso normal (o propio .jar, que é
+                    // o único que descarga o tradutor) e tamén o de baixar o repo como
+                    // .zip de GitHub ou o dun intento anterior que deixou un .git a
+                    // medias. En ningún deles vale git clone: JGit rexeita unha carpeta
+                    // non baleira con «destination path already exists and is not an
+                    // empty directory». E non se pode mover/renomear a carpeta: o .jar
+                    // execútase dende dentro e Windows bloquéao. Solución: inicializar
+                    // (ou reutilizar) o git in situ e apuntar HEAD á punta remota.
                     initInPlace(remoteUrl, token, progress);
                     return;
                 }
@@ -250,11 +251,36 @@ public class GitRepoService {
             cfg.setString("branch", branch, "merge", "refs/heads/" + branch);
             cfg.save();
 
-            // só índice: a árbore de traballo (idéntica ao commit) non se toca
+            // só índice: a árbore de traballo (idéntica ao commit no caso do .zip) non se toca
             git.reset().setMode(ResetCommand.ResetType.MIXED).setRef(branch).call();
+
+            checkoutMissing(git);
         } catch (URISyntaxException e) {
             throw new IOException("URL do remoto non válida: " + remoteUrl, e);
         }
+    }
+
+    /**
+     * Escribe no disco os ficheiros que están no índice pero non na carpeta.
+     *
+     * <p>
+     * {@link #initInPlace} naceu para adoptar unha árbore de traballo que xa
+     * existía (un .zip descomprimido), así que remataba cun reset MIXED: índice
+     * si, disco non. Pero o caso real do tradutor é unha carpeta que só ten o
+     * .jar, e alí un reset MIXED deixaba un repositorio no que **todo** o
+     * proxecto figuraba como borrado: nin lang/, nin capítulos, nin nada que
+     * abrir. Isto complétao sen tocar o que xa hai: só saca as rutas que faltan,
+     * nunca sobrescribe unha copia local nin, por suposto, o .jar en execución
+     * (que ademais xa non está trackeado).
+     */
+    private void checkoutMissing(Git git) throws GitAPIException {
+        Set<String> missing = git.status().call().getMissing();
+        if (missing.isEmpty()) {
+            return;
+        }
+        CheckoutCommand checkout = git.checkout();
+        missing.forEach(checkout::addPath);
+        checkout.call();
     }
 
     /** Cambios reais en ficheiros trackeados. Ignora *.copy*.json e o dicionario persoal (non trackeados). */

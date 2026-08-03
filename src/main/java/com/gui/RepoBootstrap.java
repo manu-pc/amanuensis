@@ -109,6 +109,26 @@ public final class RepoBootstrap {
             }
         }
 
+        // Clon a medias: hai .git, pero o proxecto non chegou ao disco. Pasaba coas
+        // versións que adoptaban a carpeta cun reset MIXED (só índice), e a xente
+        // quedaba atrapada: co .git xa creado, a pantalla inicial deixaba de ofrecer
+        // «descargar proxecto de tradución» e non había saída ningunha. Complétase
+        // polo mesmo camiño ca a descarga inicial, que xa non pisa nada do que haxa.
+        if (!Files.isDirectory(base.resolve(AppDir.LANG_DIR_NAME))
+                && !LedgerStore.hasPendingEdits(base)) {
+            if (token == null || token.isBlank()) {
+                return new Report(Outcome.NEEDS_LOGIN, List.of(),
+                        "o repositorio de tradución é privado: fai falta iniciar sesión");
+            }
+            try {
+                repo.cloneRepo(DEFAULT_REPO_URL, token);
+                return new Report(Outcome.CLONED, List.of(), DEFAULT_REPO_URL);
+            } catch (Exception e) {
+                return new Report(Outcome.OFFLINE, List.of(),
+                        "non se puido completar a descarga: " + e.getMessage());
+            }
+        }
+
         // hai traballo sen subir: primeiro sóbese, despois xa se avanzará
         if (LedgerStore.hasPendingEdits(base)) {
             return new Report(Outcome.PENDING_UPLOAD, List.of(),

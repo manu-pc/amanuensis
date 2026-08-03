@@ -35,9 +35,12 @@ public final class AppDir {
         return cwd();
     }
 
+    /** Nome da subcarpeta con todo o texto traducible. */
+    public static final String LANG_DIR_NAME = "lang";
+
     /** Subcarpeta lang/ dentro da carpeta base. */
     public static Path lang() {
-        return base().resolve("lang");
+        return base().resolve(LANG_DIR_NAME);
     }
 
     /**
