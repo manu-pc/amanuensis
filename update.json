@@ -1,18 +1,18 @@
 {
-    "version": "1.1.1",
-    "notes": "Versión 1.1.1",
+    "version": "1.1.2",
+    "notes": "Versión 1.1.2",
     "artifacts": {
         "linux": {
             "file": "amanuensis.jar",
-            "url": "https://github.com/manu-pc/amanuensis/releases/download/v1.1.1/amanuensis.jar",
-            "sha256": "6b95671d476713c6fd892b78e7cee4a415fe93833fa82482680507163c795185",
-            "size": 13449181
+            "url": "https://github.com/manu-pc/amanuensis/releases/download/v1.1.2/amanuensis.jar",
+            "sha256": "e9aefb615600247f8217b6b67599b1407c1fde7c3f10a5aa348c8378897b8c28",
+            "size": 13449489
         },
         "windows": {
             "file": "amanuensis-windows.jar",
-            "url": "https://github.com/manu-pc/amanuensis/releases/download/v1.1.1/amanuensis-windows.jar",
-            "sha256": "dade2974582f10e0c917a26bfd8282dec04044ce1d3cbdee7ad69a746a7808a2",
-            "size": 15033619
+            "url": "https://github.com/manu-pc/amanuensis/releases/download/v1.1.2/amanuensis-windows.jar",
+            "sha256": "782c48832c69e77ff2dd44eaaf1db300e9e945fbc312c3cede9a0613b287815d",
+            "size": 15033927
         }
     }
 }
