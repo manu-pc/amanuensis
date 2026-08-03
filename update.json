@@ -1,18 +1,18 @@
 {
-    "version": "1.1.0",
-    "notes": "Capítulo 5, propagación entre capítulos e autoactualización",
+    "version": "1.1.1",
+    "notes": "Versión 1.1.1",
     "artifacts": {
         "linux": {
             "file": "amanuensis.jar",
-            "url": "https://github.com/manu-pc/amanuensis/releases/download/v1.1.0/amanuensis.jar",
-            "sha256": "fb773f8de231d17467869807828921be25d13d8cdba3e437a7c9fa44d422f632",
-            "size": 13433306
+            "url": "https://github.com/manu-pc/amanuensis/releases/download/v1.1.1/amanuensis.jar",
+            "sha256": "6b95671d476713c6fd892b78e7cee4a415fe93833fa82482680507163c795185",
+            "size": 13449181
         },
         "windows": {
             "file": "amanuensis-windows.jar",
-            "url": "https://github.com/manu-pc/amanuensis/releases/download/v1.1.0/amanuensis-windows.jar",
-            "sha256": "767f281a292c9e10ba2bf8b10914669f69c01a0b1bd80bdbb68689920b03a141",
-            "size": 15017744
+            "url": "https://github.com/manu-pc/amanuensis/releases/download/v1.1.1/amanuensis-windows.jar",
+            "sha256": "dade2974582f10e0c917a26bfd8282dec04044ce1d3cbdee7ad69a746a7808a2",
+            "size": 15033619
         }
     }
 }
