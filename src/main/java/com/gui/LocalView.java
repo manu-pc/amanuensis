@@ -1012,9 +1012,15 @@ public class LocalView {
                 reloadInPlace(currentIndex);
             } else if (outcome instanceof GitRepoService.PushOutcome.Conflict c) {
                 // As nosas versións quedaron na rama de conflito (e na PR), e a árbore
-                // local volveu ao estado do servidor: sacar esas claves do rexistro,
-                // que doutro xeito volverían dar conflito unha e outra vez.
-                store.ledger().remove(pushedKeys);
+                // local volveu ao estado do servidor: sacar do rexistro **só** as claves
+                // en conflito, que doutro xeito volverían dar conflito unha e outra vez.
+                //
+                // Só esas. Un push rexeitado reverte no disco todas as claves pendentes,
+                // non só as que chocaron (resetLangTo deixa lang/ como o servidor), así
+                // que o rexistro é o único sitio onde sobreviven as limpas ata a próxima
+                // subida. Baleiralo enteiro perdíaas: quedaban na rama de conflito e
+                // nunca máis chegaban a main, aínda que ninguén as tocase.
+                store.ledger().remove(c.conflictKeys());
                 String base = "ocorreu un problema, outro usuario editou as liñas (" + c.lineRanges()
                         + ") ao mesmo tempo que ti. os teus cambios foron gardados nunha rama separada e non se perderon.";
                 if (c.prUrl() != null) {
