@@ -47,8 +47,7 @@ public final class RepoBootstrap {
      * {@link Outcome#NEEDS_LOGIN} para que a interface pida a sesión e volva
      * chamar aquí en canto a teña.
      */
-    public static final String DEFAULT_REPO_URL =
-            "https://github.com/Deltarune-en-Galego/deltarune-en-galego-DEV";
+    public static final String DEFAULT_REPO_URL = GitRepoService.DEFAULT_REMOTE;
 
     /**
      * Restos de etapas anteriores do proxecto. Bórranse só se xa non están no

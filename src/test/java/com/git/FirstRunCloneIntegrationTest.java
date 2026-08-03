@@ -2,8 +2,10 @@ package com.git;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -127,6 +129,31 @@ class FirstRunCloneIntegrationTest {
 
         assertEquals("{\"saudo\":\"Ola\"}", Files.readString(strings),
                 "unha tradución sen subir non se pisa por volver pulsar o botón");
+    }
+
+    /**
+     * O botón «descargar proxecto de tradución» e o arranque automático teñen que
+     * ir ao mesmo sitio. Non o facían: cando o proxecto pasou á organización,
+     * {@code DEFAULT_REMOTE} quedou apuntando á conta persoal, así que descargar a
+     * man fallaba (404 -> «invalid remote: origin») mentres o arranque funcionaba.
+     */
+    @Test
+    void theButtonAndTheAutomaticStartupPointAtTheSameRepository() {
+        assertEquals(com.gui.RepoBootstrap.DEFAULT_REPO_URL, GitRepoService.DEFAULT_REMOTE);
+        assertTrue(GitRepoService.DEFAULT_REMOTE.contains("Deltarune-en-Galego"),
+                GitRepoService.DEFAULT_REMOTE);
+    }
+
+    @Test
+    void aRepositoryThatIsNotThereSaysSoInsteadOfTalkingAboutRemotes() throws Exception {
+        Path base = folderWithJarOnly();
+        String missing = tmp.resolve("non-existe.git").toUri().toString();
+
+        IOException e = assertThrows(IOException.class,
+                () -> new GitRepoService(base).cloneRepo(missing, null));
+
+        assertTrue(e.getMessage().contains("non ten acceso"), e.getMessage());
+        assertFalse(e.getMessage().contains("invalid remote"), e.getMessage());
     }
 
     @Test

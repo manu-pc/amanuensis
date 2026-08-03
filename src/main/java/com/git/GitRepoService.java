@@ -15,6 +15,7 @@ import org.eclipse.jgit.api.ResetCommand;
 import org.eclipse.jgit.api.Status;
 import org.eclipse.jgit.api.TransportCommand;
 import org.eclipse.jgit.api.errors.GitAPIException;
+import org.eclipse.jgit.api.errors.InvalidRemoteException;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.ObjectLoader;
@@ -59,7 +60,16 @@ import java.util.concurrent.locks.ReentrantLock;
  */
 public class GitRepoService {
 
-    public static final String DEFAULT_REMOTE = "https://github.com/manu-pc/deltarune-en-galego-DEV.git";
+    /**
+     * O repositorio de tradución. Está aquí para que <b>só haxa un</b>: cando o
+     * proxecto pasou da conta persoal á organización, esta constante quedou
+     * apuntando ao sitio vello mentres {@link com.gui.RepoBootstrap} xa usaba o
+     * novo. O arranque automático funcionaba e o botón «descargar proxecto de
+     * tradución» non, cun erro que non dicía nada: GitHub responde 404 ao repo
+     * que xa non existe e JGit tradúceo por «invalid remote: origin».
+     */
+    public static final String DEFAULT_REMOTE =
+            "https://github.com/Deltarune-en-Galego/deltarune-en-galego-DEV.git";
 
     // A app só xestiona a subcarpeta lang/. Todo o de fóra (o .jar, readme, scripts,
     // ficheiros que o usuario cree) é asunto do usuario: nunca se reporta como "sen
@@ -208,6 +218,12 @@ public class GitRepoService {
                     .setProgressMonitor(monitorOrNull(progress));
             withAuth(clone, token);
             clone.call().close();
+        } catch (InvalidRemoteException e) {
+            // «invalid remote: origin» é o que di JGit cando GitHub responde que ese
+            // repositorio non existe... ou que existe pero non o podemos ver. Como é
+            // privado, as dúas cousas parecen a mesma dende fóra.
+            throw new IOException("non se puido acceder a " + remoteUrl
+                    + ": ou non existe, ou a túa conta de GitHub non ten acceso", e);
         } finally {
             GIT_LOCK.unlock();
         }
