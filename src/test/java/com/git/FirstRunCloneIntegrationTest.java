@@ -20,8 +20,13 @@ import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.transport.RefSpec;
 import org.eclipse.jgit.transport.URIish;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+
+import com.local.EditLedger;
+import com.local.LedgerStore;
 
 /**
  * A primeira execución real: o tradutor baixa **só o .jar**, déixao nunha carpeta
@@ -39,6 +44,23 @@ class FirstRunCloneIntegrationTest {
 
     @TempDir
     Path tmp;
+
+    private String prevLedgerDir;
+
+    @BeforeEach
+    void isolateLedgerStore() {
+        prevLedgerDir = System.getProperty(LedgerStore.DIR_PROPERTY);
+        System.setProperty(LedgerStore.DIR_PROPERTY, tmp.resolve("ledgers").toString());
+    }
+
+    @AfterEach
+    void restoreLedgerStore() {
+        if (prevLedgerDir != null) {
+            System.setProperty(LedgerStore.DIR_PROPERTY, prevLedgerDir);
+        } else {
+            System.clearProperty(LedgerStore.DIR_PROPERTY);
+        }
+    }
 
     /** Repo bare cun capítulo dentro de lang/, coma o de verdade. */
     private String createRemote() throws Exception {
@@ -101,6 +123,20 @@ class FirstRunCloneIntegrationTest {
             seed.push().setRemote(remoteUri)
                     .setRefSpecs(new RefSpec(name + ":refs/heads/" + name)).call();
             seed.checkout().setName("main").call();
+        }
+    }
+
+    /** Substitúe o historial do remoto por outro sen relación (coma unha purga). */
+    private void rewriteRemoteHistory(String remoteUri, String content) throws Exception {
+        Path other = tmp.resolve("reescrito");
+        try (Git g = Git.init().setDirectory(other.toFile()).setInitialBranch("main").call()) {
+            Path strings = other.resolve("lang/chapter1/strings.json");
+            Files.createDirectories(strings.getParent());
+            Files.writeString(strings, content, StandardCharsets.UTF_8);
+            g.add().addFilepattern(".").call();
+            g.commit().setMessage("historial purgado").call();
+            g.push().setRemote(remoteUri).setForce(true)
+                    .setRefSpecs(new RefSpec("main:refs/heads/main")).call();
         }
     }
 
@@ -261,6 +297,43 @@ class FirstRunCloneIntegrationTest {
             assertFalse(git.getRepository().getObjectDatabase().getShallowCommits().isEmpty(),
                     "e segue sen baixar o historial");
         }
+    }
+
+    /**
+     * O historial do servidor reescribiuse (purgáronse 200 MB de sprites, sons e
+     * .zip que xa non estaban no proxecto). Os clons que xa existían quedan cun
+     * historial que non é antepasado de nada, e iso saía como {@code DIVERGED}: o
+     * tradutor deixaba de recibir traballo dos demais **para sempre**, sen erro
+     * ningún. Sen nada pendente que perder, o clon adopta o historial novo.
+     */
+    @Test
+    void aRewrittenServerHistoryIsAdoptedInsteadOfFreezingTheClone() throws Exception {
+        String remote = createRemoteWithHistory(4);
+        Path base = folderWithJarOnly();
+        GitRepoService repo = new GitRepoService(base);
+        repo.cloneRepo(remote, null);
+
+        rewriteRemoteHistory(remote, "{\"saudo\":\"historial novo\"}");
+
+        assertEquals(GitRepoService.PullOutcome.UPDATED, repo.pullIfSafe(null));
+        assertEquals("{\"saudo\":\"historial novo\"}",
+                Files.readString(base.resolve("lang/chapter1/strings.json")));
+    }
+
+    /** Pero se hai traballo sen subir, non se pisa: reconcíliase coma sempre. */
+    @Test
+    void pendingWorkStillBlocksAdoptingARewrittenHistory() throws Exception {
+        String remote = createRemoteWithHistory(4);
+        Path base = folderWithJarOnly();
+        GitRepoService repo = new GitRepoService(base);
+        repo.cloneRepo(remote, null);
+
+        EditLedger ledger = EditLedger.openFor(base.resolve("lang/chapter1/strings.json"), base);
+        ledger.record("saudo", "{\"saudo\":\"v3\"}", "traducido pero sen subir");
+
+        rewriteRemoteHistory(remote, "{\"saudo\":\"historial novo\"}");
+
+        assertEquals(GitRepoService.PullOutcome.DIVERGED, repo.pullIfSafe(null));
     }
 
     /**

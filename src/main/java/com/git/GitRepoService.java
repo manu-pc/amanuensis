@@ -437,6 +437,15 @@ public class GitRepoService {
                         resetLangTo(git, remote);
                         return PullOutcome.UPDATED;
                     }
+                    // Historial reescrito no servidor: o local non leva traballo ningún
+                    // (árbore limpa, comprobado arriba, e ningunha edición no rexistro),
+                    // así que non hai nada que reconciliar e a única saída é adoptar o
+                    // historial novo. Sen isto o clon queda «diverxente» para sempre: os
+                    // commits de antes da reescritura xa non son antepasados de nada.
+                    if (!LedgerStore.hasPendingEdits(repoDir)) {
+                        resetLangTo(git, remote);
+                        return PullOutcome.UPDATED;
+                    }
                     // ambos avanzaron: NON fusionar textualmente. Deixar que a chamada reconcilie.
                     return PullOutcome.DIVERGED;
                 }
