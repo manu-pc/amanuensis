@@ -58,10 +58,14 @@ public final class MarkerReapplier {
      * @param suffix     marcadores posteriores ao último carácter visible, na orde
      *                   orixinal (formatos e pausas mesturados)
      * @param pendings   pausas {@code ^n} ancoradas dentro do texto
+     * @param leadReloc  cantos relocalizables abrían a liña antes do primeiro
+     *                   carácter visible ({@code ~1* Texto}, {@code \cp* Texto}):
+     *                   os marcadores ancorados dentro dese tramo desprázanse aos
+     *                   placeholders que o usuario escribise de verdade
      * @param newlineRaw marcador de salto que pechaba a liña, ou null se é a última
      */
     private record LineSpec(List<Token> prefix, List<Anchored> mid, List<Token> suffix,
-            List<Anchored> pendings, String newlineRaw) {
+            List<Anchored> pendings, int leadReloc, String newlineRaw) {
     }
 
     public static String reapply(List<Token> originalTokens, String newPlain) {
@@ -106,17 +110,21 @@ public final class MarkerReapplier {
         List<Token> trailing = new ArrayList<>();
         int visible = 0;
         boolean anyVisible = false;
+        int leadReloc = 0;
+        boolean anyPlainVisible = false;
 
         for (Token t : tokens) {
             if (t.isNewline()) {
                 specs.add(new LineSpec(List.copyOf(prefix), List.copyOf(mid),
-                        List.copyOf(trailing), List.copyOf(pendings), t.raw()));
+                        List.copyOf(trailing), List.copyOf(pendings), leadReloc, t.raw()));
                 prefix.clear();
                 mid.clear();
                 pendings.clear();
                 trailing.clear();
                 visible = 0;
                 anyVisible = false;
+                leadReloc = 0;
+                anyPlainVisible = false;
                 continue;
             }
             if (t.isEnd() || t.type() == TokenType.TRAILING_WS) {
@@ -135,6 +143,11 @@ public final class MarkerReapplier {
                 // un relocalizable ocupa un carácter (o seu placeholder) no texto limpo
                 visible += t.isVisible() ? t.clean().length() : 1;
                 anyVisible = true;
+                if (t.isVisible()) {
+                    anyPlainVisible = true;
+                } else if (!anyPlainVisible) {
+                    leadReloc++;
+                }
             } else if (t.isFormat() && !anyVisible && trailing.isEmpty()) {
                 prefix.add(t);
             } else if (t.isFormat() || t.isPending()) {
@@ -143,7 +156,7 @@ public final class MarkerReapplier {
         }
 
         specs.add(new LineSpec(List.copyOf(prefix), List.copyOf(mid),
-                List.copyOf(trailing), List.copyOf(pendings), null));
+                List.copyOf(trailing), List.copyOf(pendings), leadReloc, null));
         return specs;
     }
 
@@ -172,8 +185,14 @@ public final class MarkerReapplier {
                 out.append(t.text());
             }
 
-            Deque<Anchored> mid = new ArrayDeque<>(spec.mid());
-            Deque<Anchored> pendings = new ArrayDeque<>(spec.pendings());
+            // Cantos placeholders abren realmente a liña que escribiu o usuario.
+            // Se o orixinal era "~1* Texto" e o usuario parte a liña en dúas, a
+            // segunda xa non leva o "~": sen isto o "* " entraría un carácter
+            // dentro do texto ("\\Ex* ogar").
+            int lead = leadingPlaceholders(userLine, relocatable);
+            Deque<Anchored> mid = new ArrayDeque<>(shiftLead(spec.mid(), spec.leadReloc(), lead));
+            Deque<Anchored> pendings = new ArrayDeque<>(
+                    shiftLead(spec.pendings(), spec.leadReloc(), lead));
             Deque<Integer> carets = new ArrayDeque<>(
                     caretOffsets != null && lineNum < caretOffsets.size()
                             ? caretOffsets.get(lineNum)
@@ -244,6 +263,36 @@ public final class MarkerReapplier {
         }
 
         return out.toString();
+    }
+
+    /**
+     * Reancora ao inicio real da liña do usuario os marcadores que no orixinal
+     * ían dentro do tramo de relocalizables inicial. Os demais non se tocan.
+     */
+    private static List<Anchored> shiftLead(List<Anchored> anchors, int leadReloc, int lead) {
+        if (leadReloc == 0 || lead >= leadReloc) {
+            return anchors;
+        }
+        List<Anchored> out = new ArrayList<>(anchors.size());
+        for (Anchored a : anchors) {
+            out.add(a.visibleIndex() <= leadReloc
+                    ? new Anchored(a.token(), Math.min(a.visibleIndex(), lead))
+                    : a);
+        }
+        return out;
+    }
+
+    /** Placeholders con marcador pendente que abren a liña do usuario. */
+    private static int leadingPlaceholders(String userLine, Map<Character, Deque<String>> relocatable) {
+        int i = 0;
+        while (i < userLine.length()) {
+            Deque<String> queue = relocatable.get(userLine.charAt(i));
+            if (queue == null || queue.isEmpty()) {
+                break;
+            }
+            i++;
+        }
+        return i;
     }
 
     /** Colas FIFO de marcadores relocalizables, indexadas polo seu placeholder. */

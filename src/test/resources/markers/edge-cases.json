@@ -62,5 +62,16 @@
   "ch5_color_then_dialogue_prefix": "\\cp* Cats can be nasty creatures^1, can't they^1, mew...?\\cW/",
   "ch5_color_prefix_with_leading_format": "\\M1\\cp* Kris^1, is your hand okay?\\cW/",
   "ch5_color_prefix_no_space": "\\cp*text/",
-  "ch5_color_at_end_only": "* Texto normal^1.\\cW/"
+  "ch5_color_at_end_only": "* Texto normal^1.\\cW/",
+  "tilde_then_dialogue_prefix": "~1* Let's play./",
+  "tilde_then_dialogue_prefix_after_format": "\\E~1* Aww^1, Kris^1! Lembras na nosa primeira aventura.../",
+  "tilde_then_dialogue_prefix_double_space": "\\E~1*  Seica faime..^1.querer pórme un de novo./",
+  "tilde_then_dialogue_prefix_paren": "\\E~1* (What is he even saying on that one...)/%",
+  "tilde_then_star_no_space": "~1*text/",
+  "tilde_linebreak_glued": "~1* ..^1. this YELLOW KEY^1, ain't goin'~2to no HUMAN criminells./%",
+  "tilde_linebreak_after_space": "~1* Huff..^1. puff..^1. I think we ~2lost them!/%",
+  "tilde_linebreak_twice": "~1* Oh Yellow^1, dearest^1. Slip not ~2into such fragrant ~2melancholy./",
+  "tilde_linebreak_then_digit": "~1* I..^1. I can deal more than~20 damage!!!/%",
+  "tilde_substitution_not_a_break": "* ~1 perdoa a ~2!/%",
+  "tilde_substitution_stats": "* SUSIE - AT:~1 DF:~2 HP:~3&* A armadura!/%"
 }

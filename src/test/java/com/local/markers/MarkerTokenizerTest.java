@@ -81,6 +81,49 @@ class MarkerTokenizerTest {
     }
 
     @Test
+    void tildeThenDialogPrefixIsFixedFormat() {
+        // "~1* Texto": o ~n ocupa a rañura da expresión (coma un \\EX) e leva
+        // pegado o prefixo de diálogo; nin un nin outro son placeholders
+        assertEquals("FORMAT(~1)|FORMAT(* )|VISIBLE(x)", shape("~1* x"));
+        assertEquals("FORMAT(\\E)|FORMAT(~1)|FORMAT(* )|VISIBLE(x)", shape("\\E~1* x"));
+    }
+
+    @Test
+    void tildeThenStarGluedToTextIsVisible() {
+        assertEquals("FORMAT(~1)|VISIBLE(*)|VISIBLE(x)", shape("~1*x"));
+    }
+
+    @Test
+    void tildeThenDialogPrefixOnLaterVisualLine() {
+        assertEquals("FORMAT(* )|VISIBLE(a)|NEWLINE(&)|FORMAT(~1)|FORMAT(* )|VISIBLE(b)",
+                shape("* a&~1* b"));
+    }
+
+    @Test
+    void tildeInsideThatFamilyIsALineBreak() {
+        // o ~2 desas liñas é o salto de liña do xogo, non unha substitución
+        assertEquals("FORMAT(~1)|FORMAT(* )|VISIBLE(a)|NEWLINE(~2)|VISIBLE(b)", shape("~1* a~2b"));
+        assertEquals("FORMAT(~1)|FORMAT(* )|VISIBLE(a)|VISIBLE( )|NEWLINE(~2)|VISIBLE(b)",
+                shape("~1* a ~2b"));
+    }
+
+    @Test
+    void lineBreakTildeTakesOnlyOneDigit() {
+        // "more than~20 damage" = salto + "0 damage": o 0 é texto, non parte do marcador
+        assertEquals("FORMAT(~1)|FORMAT(* )|VISIBLE(a)|NEWLINE(~2)|VISIBLE(0)|VISIBLE( )|VISIBLE(b)",
+                shape("~1* a~20 b"));
+    }
+
+    @Test
+    void tildeOutsideThatFamilyIsStillASubstitution() {
+        // "* ~1 perdoa a ~2!" ou "AT:~1 DF:~2": aquí os ~n son valores do xogo
+        assertEquals("FORMAT(* )|PENDING(~1)|VISIBLE( )|VISIBLE(a)|VISIBLE( )|PENDING(~2)",
+                shape("* ~1 a ~2"));
+        assertEquals("VISIBLE(A)|VISIBLE(T)|VISIBLE(:)|PENDING(~1)|VISIBLE( )|PENDING(~11)",
+                shape("AT:~1 ~11"));
+    }
+
+    @Test
     void endMarkers() {
         assertEquals("VISIBLE(a)|END(/)", shape("a/"));
         assertEquals("VISIBLE(a)|END(/%)", shape("a/%"));
@@ -110,6 +153,11 @@ class MarkerTokenizerTest {
             "SUSIE GOT THE \\cYPOWER CROISSANT\\cW",
             "a&b#c\nd",
             "* (Clues acquired.)&* (Now you can report.)~1",
+            "~1* Let's play./",
+            "~1* ..^1. this YELLOW KEY^1, ain't goin'~2to no HUMAN criminells./%",
+            "~1* I..^1. I can deal more than~20 damage!!!/%",
+            "~1* Oh Yellow^1, dearest^1. Slip not ~2into such fragrant ~2melancholy./",
+            "\\E~1* Aww^1, Kris^1! Lembras na nosa primeira aventura.../",
             "Heaven knows^6&from our hearts^2 %",
             "* (Take it?)/ ",
             "text with trailing space  ",

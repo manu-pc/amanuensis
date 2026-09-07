@@ -65,6 +65,41 @@ class MarkerReapplierTest {
     }
 
     @Test
+    void tildeExpressionSlotIsHiddenLikeABackslashMarker() {
+        // o ~1 inicial non chega ao texto limpo: o tradutor non ten que coidalo,
+        // e o '*' de diálogo xa non lle rouba o sitio ao primeiro \\cX
+        assertEquals("Get the *POWER*.", strip("~1* Get the \\cYPOWER\\cW./"));
+        assertEquals("~1* Colle o \\cYPODER\\cW./",
+                reapply("~1* Get the \\cYPOWER\\cW./", "Colle o *PODER*."));
+        assertEquals("Aww, Kris!", strip("\\E~1* Aww^1, Kris^1!/"));
+        assertEquals("\\E~1* Vaia^1, Kris^1!/", reapply("\\E~1* Aww^1, Kris^1!/", "Vaia, Kris!"));
+    }
+
+    @Test
+    void tildeLineBreakIsARealNewlineInTheCleanText() {
+        String original = "~1* ..^1. this YELLOW KEY^1, ain't goin'~2to no HUMAN criminells./%";
+        assertEquals("... this YELLOW KEY, ain't goin'\nto no HUMAN criminells.", strip(original));
+        assertEquals("~1* ..^1. esta CHAVE AMARELA^1, non vai~2a criminais HUMANOS./%",
+                reapply(original, "... esta CHAVE AMARELA, non vai\na criminais HUMANOS."));
+    }
+
+    @Test
+    void tildeLineBreakRepeatsWhenTheTranslationNeedsMoreLines() {
+        assertEquals("~1* unha~2dúas~2tres./",
+                reapply("~1* one~2two./", "unha\ndúas\ntres."));
+        // e desaparece se a tradución colle nunha soa liña
+        assertEquals("~1* unha soa./", reapply("~1* one~2two./", "unha soa."));
+    }
+
+    @Test
+    void dialogPrefixAfterRelocatableIsRepeatedOnEachVisualLine() {
+        // ao partir a liña, a segunda xa non leva o placeholder inicial: o "* "
+        // ten que ir ao comezo, non un carácter dentro ("x* ogar")
+        assertEquals("\\cp* Imos&* xogar./",
+                reapply("\\cp* Let's play./", "*Imos\nxogar."));
+    }
+
+    @Test
     void quotesAreNotEscaped() {
         // o escape de JSON faino Gson ao gardar; facelo aquí producía \\" no ficheiro
         assertEquals("\\E8* Sobre as \"regras\" deste mundo./",

@@ -11,7 +11,9 @@ import java.util.List;
  * <li>{@code \cX} / {@code \CX} — cor de texto (relocalizable, placeholder *)</li>
  * <li>{@code \En}, {@code \Mn}, {@code \fn}, {@code \R}... — formato de posición fixa</li>
  * <li>{@code ^n} — pausa de n fotogramas</li>
- * <li>{@code ~n} — efecto de texto (relocalizable, placeholder ~)</li>
+ * <li>{@code ~n} — substitución do mod (relocalizable, placeholder ~), agás na
+ * familia {@code ~1* Texto}: alí o {@code ~1} inicial é fixo (ocupa a rañura da
+ * expresión, coma un {@code \EX}) e os {@code ~2} seguintes son saltos de liña</li>
  * <li>{@code \On} / {@code \In} — relocalizables, placeholders @ e $</li>
  * <li>{@code &amp;}, {@code #}, {@code \n} — saltos de liña</li>
  * <li>{@code /}, {@code /%}, {@code %}, {@code %%} — fin de texto</li>
@@ -93,8 +95,17 @@ public final class MarkerTokenizer {
         }
 
         boolean atLineStart = false;
+        // "~1* Texto" (767 liñas do capítulo 5, tamén "\E~1* Texto"): o ~n inicial
+        // non é unha substitución de texto senón a rañura da expresión, e o ~2 que
+        // vén despois é o salto de liña do xogo (o anaco anterior mide 13-38
+        // caracteres visibles, o ancho dunha liña de diálogo). Vense así.
+        boolean tildeNewlines = false;
+        boolean lineHasVisible = false;
 
         while (i < n) {
+            if (!out.isEmpty() && out.get(out.size() - 1).isVisible()) {
+                lineHasVisible = true;
+            }
             char c = s.charAt(i);
 
             // Salto de liña literal (carácter \n real no string)
@@ -102,6 +113,7 @@ public final class MarkerTokenizer {
                 out.add(Token.newline("\n"));
                 i++;
                 atLineStart = true;
+                lineHasVisible = false;
                 continue;
             }
 
@@ -110,6 +122,7 @@ public final class MarkerTokenizer {
                 out.add(Token.newline("#"));
                 i++;
                 atLineStart = true;
+                lineHasVisible = false;
                 continue;
             }
 
@@ -118,6 +131,7 @@ public final class MarkerTokenizer {
                 out.add(Token.newline("&"));
                 i++;
                 atLineStart = true;
+                lineHasVisible = false;
                 continue;
             }
 
@@ -204,12 +218,35 @@ public final class MarkerTokenizer {
                 out.add(Token.pending(s.substring(i, j))); // ex: ^1
                 i = j;
             }
-            // Marcadores ~n (efecto de texto)
+            // Marcadores ~n (substitución do mod ou salto de liña)
             else if (c == '~') {
                 int j = i + 1;
                 while (j < n && Character.isDigit(s.charAt(j))) {
                     j++;
                 }
+
+                // "~1* Texto": o ~n abre a liña na rañura da expresión e leva
+                // pegado o prefixo de diálogo. É fixo, coma un \EX: se se deixa
+                // como placeholder o tradutor ve un ~ que non debe tocar e, se a
+                // liña ten cores, o primeiro \cX acaba no sitio do prefixo.
+                if (!lineHasVisible && j < n && s.charAt(j) == '*') {
+                    out.add(Token.format(s.substring(i, j)));
+                    tildeNewlines = true;
+                    i = consumeDialoguePrefix(s, j, out);
+                    continue;
+                }
+
+                // ~2 dentro dunha liña desa familia: salto de liña. Só se toma un
+                // díxito para que "más de~20 danos" conserve o seu 0 no texto limpo.
+                if (tildeNewlines) {
+                    int end = Math.min(i + 2, n);
+                    out.add(Token.newline(s.substring(i, end)));
+                    i = end;
+                    atLineStart = true;
+                    lineHasVisible = false;
+                    continue;
+                }
+
                 out.add(Token.pending(s.substring(i, j))); // ex: ~1
                 i = j;
             }
