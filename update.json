@@ -1,18 +1,18 @@
 {
-    "version": "1.1.6",
-    "notes": "Arranxo: as edicións que non chocaban xa non se perden cando outra persoa edita outra liña do mesmo ficheiro á vez.",
+    "version": "1.1.7",
+    "notes": "Arranxo: nas liñas que empezan por ~1* o marcador inicial xa non se ve como un ~ que hai que coidar, e o ~2 do medio amosase como un salto de liña de verdade (Intro para partir a liña).",
     "artifacts": {
         "linux": {
             "file": "amanuensis.jar",
-            "url": "https://github.com/manu-pc/amanuensis/releases/download/v1.1.6/amanuensis.jar",
-            "sha256": "5bbac27f728184986d49226070a750668880c39993d4161e42642308d688fda0",
-            "size": 13450280
+            "url": "https://github.com/manu-pc/amanuensis/releases/download/v1.1.7/amanuensis.jar",
+            "sha256": "f37dbeb75019fb24d522b81a43afa4eb0dccceeabc2f9142bd094187f7096bc2",
+            "size": 13451065
         },
         "windows": {
             "file": "amanuensis-windows.jar",
-            "url": "https://github.com/manu-pc/amanuensis/releases/download/v1.1.6/amanuensis-windows.jar",
-            "sha256": "40b4e53b0dec1e208673aef56b81fb17f36f23805b664c30134dd33534a7b55b",
-            "size": 15034718
+            "url": "https://github.com/manu-pc/amanuensis/releases/download/v1.1.7/amanuensis-windows.jar",
+            "sha256": "135e471afca1739f7e2307de3707f8f0c2d348cc49790ead9e9860e2b245aede",
+            "size": 15035503
         }
     }
 }
